@@ -1,0 +1,73 @@
+Third-Party License Notices for ax (agentswitch)
+
+This file lists the open source software included in binary distributions of ax.
+Full license texts ship with each Go module in the module cache.
+
+Generated from go.mod (github.com/agentswitch-org/ax). All dependencies
+are MIT or BSD-3-Clause; no copyleft dependencies are present.
+
+--------------------------------------------------------------------------------
+
+github.com/BurntSushi/toml v1.6.0
+License: MIT
+Source:  https://github.com/BurntSushi/toml/blob/v1.6.0/COPYING
+
+github.com/clipperhouse/uax29/v2 v2.2.0
+License: MIT
+Source:  https://github.com/clipperhouse/uax29/blob/v2.2.0/LICENSE
+
+github.com/creack/pty v1.1.24
+License: MIT
+Source:  https://github.com/creack/pty/blob/v1.1.24/LICENSE
+
+github.com/dustin/go-humanize v1.0.1
+License: MIT
+Source:  https://github.com/dustin/go-humanize/blob/v1.0.1/LICENSE
+
+github.com/google/uuid v1.6.0
+License: BSD-3-Clause
+Source:  https://github.com/google/uuid/blob/v1.6.0/LICENSE
+
+github.com/mattn/go-isatty v0.0.20
+License: MIT
+Source:  https://github.com/mattn/go-isatty/blob/v0.0.20/LICENSE
+
+github.com/mattn/go-runewidth v0.0.24
+License: MIT
+Source:  https://github.com/mattn/go-runewidth/blob/v0.0.24/LICENSE
+
+github.com/Microsoft/go-winio v0.6.2
+License: MIT
+Source:  https://github.com/microsoft/go-winio/blob/v0.6.2/LICENSE
+
+github.com/ncruces/go-strftime v1.0.0
+License: MIT
+Source:  https://github.com/ncruces/go-strftime/blob/v1.0.0/LICENSE
+
+github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec
+License: BSD-3-Clause
+Source:  https://github.com/remyoudompheng/bigfft/blob/24d4a6f8daec/LICENSE
+
+golang.org/x/sys v0.46.0
+License: BSD-3-Clause
+Source:  https://cs.opensource.google/go/x/sys/+/v0.46.0:LICENSE
+
+golang.org/x/term v0.44.0
+License: BSD-3-Clause
+Source:  https://cs.opensource.google/go/x/term/+/v0.44.0:LICENSE
+
+modernc.org/libc v1.73.4
+License: MIT
+Source:  https://gitlab.com/cznic/libc/blob/v1.73.4/LICENSE-3RD-PARTY.md
+
+modernc.org/mathutil v1.7.1
+License: BSD-3-Clause
+Source:  https://gitlab.com/cznic/mathutil/-/blob/master/LICENSE
+
+modernc.org/memory v1.11.0
+License: BSD-3-Clause
+Source:  https://gitlab.com/cznic/memory/blob/v1.11.0/LICENSE-GO
+
+modernc.org/sqlite v1.53.0
+License: BSD-3-Clause
+Source:  https://gitlab.com/cznic/sqlite/blob/v1.53.0/LICENSE

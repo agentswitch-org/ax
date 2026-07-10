@@ -1,0 +1,20 @@
+[
+  {
+    "slug": "hiking-gifts",
+    "display": "Hiking Gifts",
+    "keywords": ["hiking gift", "mountain lover", "trail shirt", "outdoor gift"],
+    "notes": "Evergreen category with seasonal spikes. Low competition in profession and hobby overlap."
+  },
+  {
+    "slug": "dog-mom-tees",
+    "display": "Dog Mom Tees",
+    "keywords": ["dog mom shirt", "fur mama", "dog lover gift", "pet owner tee"],
+    "notes": "High repeat-purchase identity niche. Gift buying peaks around major gift-giving holidays."
+  },
+  {
+    "slug": "programmer-humor",
+    "display": "Programmer Humor",
+    "keywords": ["programmer shirt", "coding gift", "software developer tee", "bug fix shirt"],
+    "notes": "Durable identity niche with strong gift-buying signal. Low seasonal dependency."
+  }
+]

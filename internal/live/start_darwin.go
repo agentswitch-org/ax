@@ -1,0 +1,21 @@
+//go:build darwin
+
+package live
+
+import (
+	"strconv"
+
+	"golang.org/x/sys/unix"
+)
+
+func kernelProcessStartToken(pid int) string {
+	kp, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if err != nil || kp == nil || kp.Proc.P_pid != int32(pid) {
+		return ""
+	}
+	tv := kp.Proc.P_starttime
+	if tv.Sec == 0 && tv.Usec == 0 {
+		return ""
+	}
+	return "darwinstart:" + strconv.FormatInt(tv.Sec, 10) + "." + strconv.FormatInt(int64(tv.Usec), 10)
+}

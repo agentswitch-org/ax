@@ -1,0 +1,170 @@
+version: 2
+
+project_name: ax
+
+before:
+  hooks:
+    - go mod tidy
+    - go vet ./...
+    - go test ./...
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    main: ./cmd/ax
+    binary: ax
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/agentswitch-org/ax/internal/build.Version={{.Version}}
+
+archives:
+  - formats:
+      - tar.gz
+    # Windows users expect a .zip, not a .tar.gz.
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - CHANGELOG.md
+      - config.example.toml
+      - LICENSE
+      - THIRD-PARTY-NOTICES
+
+nfpms:
+  - id: ax
+    package_name: ax
+    vendor: AgentSwitch
+    homepage: https://github.com/agentswitch-org/ax
+    maintainer: AgentSwitch <support@agentswitch.org>
+    description: Session switcher for LLM CLI agents
+    license: MIT
+    section: utils
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: README.md
+        dst: /usr/share/doc/ax/README.md
+      - src: LICENSE
+        dst: /usr/share/doc/ax/LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  header: |
+    ## ax v0.1.0: first public release
+
+    ax is a daemonless control substrate for command-line coding agents. It turns local and
+    remote Claude Code, Codex, opencode, and pi sessions into addressable workers that can be
+    launched, detached, resumed, read, waited on, tagged, killed, and sent input from the CLI.
+    Humans get one searchable TUI for jumping between live sessions; agents and scripts get a
+    small verb set for self-propelled runs that need to spawn workers, watch transcripts,
+    exchange messages, enforce fences, and converge on a result without a daemon. ax has no LLM
+    of its own, no accounts, and no telemetry. Its only network use is the explicit `ax models
+    update` command and the SSH or other transports you configure for remote hosts.
+
+    ### Install
+
+    | Method | Command |
+    |--------|---------|
+    | Homebrew cask | `brew install --cask agentswitch-org/ax/ax` |
+    | macOS/Linux installer | `curl -fsSL https://agentswitch.org/install.sh \| sh` |
+    | Windows installer | `irm https://agentswitch.org/install.ps1 \| iex` |
+    | Binary release | Download the archive for your platform from the assets below, extract `ax`, place it on `PATH` |
+    | Go toolchain | `go install github.com/agentswitch-org/ax/cmd/ax@latest` |
+    | Source | Clone the repo, run `make install` (places `ax` in `~/.local/bin`; add that directory to `PATH` on stock macOS) |
+
+    ### Runtime requirements
+
+    ax needs only its own binary. The no-mux/native holder path is the default; tmux
+    and zellij are optional multiplexer upgrades, and dtach is only needed on hosts
+    explicitly configured with `hold_backend = "dtach"`. ripgrep speeds up transcript
+    content search, and zoxide supplies directory candidates when starting a new
+    session. Both degrade gracefully when absent.
+
+    ### What's in this release
+
+    - **Unified picker** across Claude Code, Codex, opencode, and pi: one searchable list with
+      session grouping by project or run, sortable columns, a transcript preview, and a run-tree
+      view for multi-agent work.
+    - **Shell verbs** to launch and drive sessions: `ax claude "task"`, `ax read`, `ax send`,
+      `ax continue`, `ax wait`, `ax result`, `ax tag`, `ax ask`, `ax reply`, `ax kill`,
+      `ax search`, and `ax runs`. One session can launch and steer others through these verbs.
+    - **Hard fences** on cost, fan-out, recursion depth, and time. Set limits at launch and ax
+      enforces them mechanically, cascade-killing a run when a limit trips.
+    - **Write fence**: launch a session with `--write GLOB` and it can write only where a glob
+      matches, or `--no-write` and it can read and search but not write at all or run mutating
+      commands, delegating all writes to worker sessions it spawns.
+    - **Ranked `ax search --json`** returns matches with metadata and transcript snippets to
+      inform reuse decisions. `ax continue` resumes an existing session with a new task.
+    - **Remote host federation**: fold sessions from other machines into the same picker over SSH
+      or any transport you configure, with no daemon and no open port.
+
+    ### Autonomy posture
+
+    By default ax launches each agent in its harness's permission-bypass mode
+    (`--dangerously-skip-permissions` for Claude Code, full-access mode for Codex) so sessions
+    run unattended without blocking for input. Run ax in an environment you trust: a VM, a
+    container, or a dedicated machine where the agent has limited reach. To remove the bypass
+    for a specific harness, set `args = []` in its `[[harness]]` block in
+    `~/.config/ax/config.toml`.
+
+    ### Platform support
+
+    macOS, Linux, and Windows on amd64 and arm64. On Windows ax runs natively: the process
+    backend puts each harness under a ConPTY and drives input over a per-session named pipe;
+    tmux/zellij and the POSIX-only conveniences are unavailable there.
+
+    ### License
+
+    MIT.
+
+# Homebrew cask tap publishing.
+# Prerequisites:
+#   - a public GitHub repo: agentswitch-org/ax-homebrew
+#   - a fine-grained PAT scoped to that repo stored as the TAP_GITHUB_TOKEN secret
+# When TAP_GITHUB_TOKEN is empty, keep generating the cask in dist/ but skip
+# pushing to the tap so the rest of the release can complete.
+homebrew_casks:
+  - name: ax
+    repository:
+      owner: agentswitch-org
+      name: ax-homebrew
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    skip_upload: "{{ if .Env.TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}"
+    directory: Casks
+    homepage: https://github.com/agentswitch-org/ax
+    description: Session switcher for LLM CLI agents
+    license: "MIT"
+    binaries:
+      - ax
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/ax"]
+          end

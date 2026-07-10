@@ -1,0 +1,342 @@
+# ax config. Copy to ~/.config/ax/config.toml to add or change a harness.
+# Built-ins (claude, pi, codex, opencode) work with no file. A [[harness]] whose
+# name matches a built-in overrides it; a new name is added. See the README.
+
+# Template placeholders:
+#   resume: {id} {dir} {model} {args}
+#   launch: {dir} {args} {newid}
+# {model} and {args} drop out when empty. {newid} is a fresh session id ax passes
+# to the harness (e.g. claude --session-id {newid}) so it can track the window.
+
+# Picker columns and order. Omit for the default. HOST is added automatically
+# when remote hosts are configured; NAME/ID appear when runs exist and TAGS once
+# anything is tagged. "tag:<key>" pins one tag key as its own column, e.g.
+# "tag:workstream" shows each session's workstream=<value>. Add "run" explicitly
+# if you want the run id in the table; it was named "group" before the
+# group->run rename, and "group" still works as a deprecated alias.
+# columns = ["harness", "model", "age", "ctx", "cost", "tag:workstream", "dir", "win", "title"]
+
+# Per-column defaults for the picker's column-management modal (open it with `|`,
+# the "columns" key). Each [[column]] sets a column's default width, visibility,
+# and (by the order of the [[column]] blocks) horizontal position, keyed by the
+# column's stable key. Any field left out keeps the built-in default; the modal's
+# reset (r) reverts to exactly these. Live edits made in the modal persist to
+# ~/.local/state/ax/ui.json and override these until you reset.
+# Available keys: host, status, lifecycle, archived, harness, state, spin,
+# activity, yolo, name, run, tags, model, effort, age, ctx, cost, tokens, dir, win, title, id, and
+# tag:<key> for a pinned label column.
+# [[column]]
+# key = "title"
+# width = 60
+# [[column]]
+# key = "dir"
+# width = 24
+# [[column]]
+# key = "tokens"
+# visible = false
+
+# default_harness: the harness to use when the first positional arg is not a
+# known verb or harness name. Lets you run `ax "fix the bug"` instead of
+# `ax claude "fix the bug"`. Known verbs and harness names always take precedence.
+# default_harness = "claude"
+
+# shell: what ax runs a harness through. Default is platform-specific ("sh -c"
+# on Unix, PowerShell on Windows). Use a login shell like "zsh -lic" so a tool
+# manager (mise, nvm, asdf) sets up PATH when ax's own environment doesn't
+# already have the harness, e.g. when it's launched over ssh. Set this in a
+# machine's own config (the one where the harness runs).
+# shell = "zsh -lic"
+
+# Compose content directories, read by the c/C/ctrl-n compose flow: behaviors_dir
+# holds behavior files/folders (instruction text for --behavior), recipes_dir holds
+# flat recipe scripts ax lists and execs as tracked runs. ax ships NO behaviors or
+# recipes of its own; these point it at content YOU own. Both PATHS are machine-
+# local (a Windows path is not a Mac path) and are EXCLUDED from `ax config sync`
+# like [[host]] entries (see the LOCAL list under "Config propagation" below).
+# Syncing the directory CONTENTS across a fleet is a later capability, not today.
+# Unset leaves the matching compose step dormant (inline behavior + plain still work).
+# behaviors_dir = "~/ax/behaviors"
+# recipes_dir = "~/ax/recipes"
+
+# args: default flags for a harness. The picker's with-flags keys apply them: `C`
+# starts a new session with them, `E` resumes one with them; `c`, Enter, and `e`
+# launch without them. A flag like --dangerously-skip-permissions runs the agent
+# unattended; only use it inside an isolated box (see "Running agents safely" in
+# the README). Overriding a built-in is field by field, so just `name` + `args`
+# adds flags while keeping its built-in glob/resume/launch.
+# [[harness]]
+# name = "claude"
+# args = "--model claude-opus-4-8"
+
+# Rebind picker keys. Only what you list changes; the rest keep their defaults.
+# Keys are letters, ctrl-<letter>, or names (enter, tab, esc, space, up, down,
+# left, right). Actions: down up top bottom half_down half_up preview_down
+# preview_up preview_half_down preview_half_up preview_top preview_bottom
+# next_match prev_match col_prev col_next sort scope archive toggle_archived
+# machines runs tree group_by columns fold collapse_all expand_all reply filter
+# search mark visual label rename move detach_window open_window open open_args
+# kill compose new new_args net quit help bind. "bind" is the leader key for
+# [[bind]] (below), default "`".
+# [keys]
+# kill     = "K"
+# machines = "M"
+# filter   = ["i", "a"]   # filter the highlighted column; a value can be one key or a list
+
+# User keybindings: press the leader key ("`" by default, rebindable as the
+# "bind" action in [keys] above), then Key, to run Run as a shell command with
+# the TUI suspended around it, so an interactive command (an editor, a pager)
+# owns the terminal cleanly and the picker redraws when it exits. No built-in
+# defaults and no collision with picker keys is possible: a binding only fires
+# after the leader, a namespace the built-in keymap never reads from.
+#
+# Run placeholders (each shell-quoted): {id} {run} {dir} {transcript}, from the
+# currently selected session, and {file}, this binding's own fixed path (~
+# expanded, set per-binding, not derived from the selection).
+# [[bind]]
+# key  = "e"
+# run  = "${EDITOR:-vi} {transcript}"     # open the selected session's transcript
+# [[bind]]
+# key  = "b"
+# run  = "${EDITOR:-vi} {file}"
+# file = "~/notes/backlog.md"             # open a fixed file, e.g. a project backlog
+# [[bind]]
+# key  = "r"
+# run  = "ax claude 'fix the flaky test' --run {run}"   # run an ax recipe against the run
+
+# Remote machines to merge into the picker. ax runs "<transport> ax list --json"
+# to read a host and "<transport> ax attach <id>" to open one, so the host needs
+# ax installed and reachable. No daemon, no ports: it rides the transport's auth.
+# Plain ax on a host reads that host's local sessions only; configure [[host]]
+# on each machine where you want a federated picker or `ax list --federated`.
+# For a transport that passes argv verbatim instead of through a remote shell
+# (kubectl exec ... --, docker exec) set raw_argv = true so ax skips quoting.
+# Use "ssh -t" so attach gets a pty (harmless for the list query).
+# [[host]]
+# name      = "laptop"
+# transport = "ssh -t user@laptop"
+# ax        = "ax"                 # ax path on the host (default: "ax")
+# [[host]]
+# name      = "vm"
+# transport = "ssh -t -J jump vm"
+# A Windows host whose sshd DefaultShell is PowerShell re-parses argv with pwsh,
+# which does NOT honor the POSIX embedded-quote escape ax sends by default. Set
+# shell = "pwsh" so ax quotes with PowerShell's doubled-quote escaping instead;
+# leaving it posix would corrupt any apostrophe in a forwarded run/label/model
+# value and let a crafted value inject commands on the host.
+# [[host]]
+# name      = "win01"
+# transport = "ssh -t win01"
+# shell     = "pwsh"
+# headless  = true   # its interactive launcher/mux is unwired, so `ax claude ... --host win01` forces --headless
+
+# Override one field of a built-in (here: resume claude without pinning the
+# model). Only the fields you set change; the rest keep their built-in values.
+# [[harness]]
+# name   = "claude"
+# resume = "cd {dir} && claude --resume {id}"
+
+# Add a harness that reuses an existing parser (format = claude/pi/codex/opencode):
+# [[harness]]
+# name   = "myagent"
+# glob   = "~/.myagent/sessions/*/*.jsonl"
+# id_regex = "_(?P<id>[0-9a-f-]{36})\\.jsonl$"
+# format = "pi"
+# resume = "cd {dir} && myagent --resume {id}"
+# launch = "myagent"
+
+# ---- control layer ----
+
+# Extra launch placeholders: {behavior} (system prompt), {task} (initial prompt),
+# {newid} (a session id ax mints). launch_headless is selected only by
+# explicit --headless; --wait and --unattended keep using watched `launch`
+# unless --headless is also present.
+# waiting_re marks a session blocked on a sub-prompt (a permission y/n, an OAuth
+# login) for the `waiting` follow event.
+# [[harness]]
+# name = "claude"
+# launch_headless = "claude -p --session-id {newid} --append-system-prompt {behavior} {args} {task}"
+# waiting_re = "(?i)do you want to proceed|paste the code"
+
+# Multiplexer backend: "tmux" (Unix default), "zellij", "process" (Windows
+# default), or "none".
+# mux = "tmux"
+
+# Session holder: what keeps a harness alive when its window closes or a viewer
+# detaches (the detach chord, ctrl-a then d by default). "native" (default) is
+# ax's own holder built into `ax run` (no external binary); "dtach" is the
+# pre-native external dtach wrapper, kept as a fallback; "none" disables
+# holding (closing a window kills its session).
+# hold_backend = "native"
+
+# Detach chord inside an attached session: press the prefix (ctrl-a by
+# default), then the command letter (d by default), and you return to the
+# shell; the session keeps running (`ax attach <id>` to come back). Only the
+# prefix is intercepted; press it twice to send a literal ctrl-a to the
+# harness, and prefix-then-anything-else passes both bytes through. The prefix
+# is any "ctrl-<letter>" or the caret form ("^b"); the letter is a bare
+# letter. ctrl-\ always works as a detach fallback.
+# detach_prefix = "ctrl-a"
+# detach_key = "d"
+
+# Menu chord inside an attached session: the same prefix, then the menu letter
+# (a by default), detaches (the session keeps running, exactly like the detach
+# chord) and reopens the ax picker in this terminal, so you can hop between
+# sessions without a multiplexer. Shares detach_prefix; the letter is a bare
+# letter.
+# menu_key = "a"
+
+# Window name prefix stamped on every ax-managed window/session/tab in tmux or
+# zellij, so ax windows are visually distinct and bulk-selectable. Default "ax:".
+# "off" disables prefixing entirely.
+# mux_prefix = "ax:"
+
+# Group windows by a label key into a named mux session. "project" uses the
+# auto-seeded project label; any other value is used as a label key. "off"
+# (default) keeps flat placement (all windows in the current mux session).
+# Only the tmux backend with an active $TMUX honors this setting.
+# mux_group = "off"
+
+# Write-capability fence: applies when a session launches with --write GLOB
+# (writes allowed only where a glob matches) or --no-write (no writes at all).
+# `allow` lists extra commands permitted on top of the built-in read-only set.
+# An allowed command inherits full write/exec capability, so only include
+# genuinely read-only tools (e.g. "rg", "bat"). "make" or "go" would defeat the
+# fence. `on_unsupported` chooses what happens when a fenced launch targets a
+# harness ax cannot fence (codex, pi, opencode): "refuse" (default, fail closed)
+# or "best-effort" (warn and launch unfenced). --fence best-effort overrides per
+# launch.
+# [fence]
+# allow = ["rg", "bat"]
+# on_unsupported = "refuse"
+
+# Launch fence: refuse a harness or model a launch may not use.
+# [policy]
+# harness = ["claude", "codex"]        # allow-list; empty = any configured
+# [policy.model]
+# deny  = ["*opus-max*"]               # or allow = [...]; deny wins
+
+# Notify hooks: ax execs a command at lifecycle transitions so a human away from
+# the picker is reached with no daemon. Two TOML forms (mutually exclusive):
+#
+# String shorthand -- fires for needs-you and done-review (attention states only):
+#   notify = "bell"     # terminal BEL; from `ax ask` it flags the session's tmux window
+#   notify = "tmux"     # tmux display-message on every attached client's status line
+#   notify = "ax-telegram {event} {summary}"   # rides an `ax-foo` PATH extension
+# notify = "bell"
+#
+# Table form -- maps any event to a command; the only way to hook run-success:
+#   needs-you fires when a session is blocked on a human (`ax ask`, harness hook)
+#   done-review fires when a session tagged success is presenting its result
+#   run-success fires at the done-gate after AX_ACCEPT passes and outcome is written
+# Placeholders (each shell-quoted): {id} {event} {state} {summary} {name} {run}
+# {event} and {state} carry the same value; prefer {event} in new templates.
+# {group} is a deprecated alias for {run}; prefer {run} in new templates.
+# [notify]
+# needs-you   = "bell"
+# done-review = "tmux"
+# run-success = "ax send {run} 'shipped: {summary}, check the changelog, dispatch a docs update'"
+#
+# The notify hook fires on lifecycle events with a documented event list and
+# robustness model.
+
+# Metrics: `ax metrics` (table, --json, --prom) always works ad hoc, reading
+# whatever sessions and run records already exist. This key only gates a side
+# effect: rewriting a Prometheus textfile-collector .prom file every time a run
+# concludes (the same choke point run-success above fires from), for
+# node_exporter to pick up. Empty (default) means no file is written.
+# [metrics]
+# textfile = "/var/lib/node_exporter/textfile_collector/ax.prom"
+
+# Retention is machine-local and never travels with `ax config sync`. Auto-retire
+# archives only concluded ephemeral worker sessions (Parent != ""), never durable
+# top-level sessions, live sessions, or sessions with a pending `ax ask`. Archive
+# means hidden from default views; transcripts and metadata remain on disk and
+# `ax unarchive` reverses it. `ax prune --dry-run` shows the same archive-only
+# cleanup candidates on demand. Worker reaping ends the resident process of a
+# concluded worker (never a durable top-level session) reap_after after it
+# concludes; --keep-live at launch opts a session out. Reaping kills only the
+# process; transcripts and metadata stay on disk.
+# [retention]
+# auto_retire = true
+# retain_after = "10m"
+# prune_crashed = true
+# reap_concluded_workers = true
+# reap_after = "60s"
+
+# Offline mode: block every outbound network call ax itself makes. The only ax-
+# initiated call is `ax models update` (fetches the public model-price catalog
+# from models.dev). With offline = true that command exits with an error instead
+# of contacting the network. ax degrades gracefully to bundled or previously
+# cached model data; token and cost columns still work from whatever data is
+# present in ~/.local/state/ax/models.json. Also honored via AX_OFFLINE=1 (any
+# non-empty value) in the environment. SSH and other user-configured transports
+# are not affected (ax does not initiate those; the transport is a user command).
+# offline = false
+
+# ---------------------------------------------------------------------------
+# Config propagation: `ax config sync`
+#
+# The key-holding machine is the source of truth. It PUSHES a portable "profile"
+# over each host's existing ssh transport (the same [[host]] entries above),
+# overwriting that host's profile while preserving every LOCAL setting. No git,
+# no external source, no daemon: it rides the transport you already trust.
+# Threat model is a trusted operator (the ssh-key holder is the admin); this is
+# footgun-avoidance, not intruder-defense.
+#
+# The split is fixed in code, not a second file. What travels vs what stays:
+#
+#   PROFILE (portable, synced)
+#     per-harness TEMPLATE fields, merged BY NAME: launch, launch_headless,
+#       resume, resume_input, resume_input_headless, format, args, waiting_re,
+#       id_regex, skip_permissions
+#     UI/behavior: columns, [[column]] defaults, [keys], detach_prefix,
+#       detach_key, menu_key, mux_prefix, mux_group, default_harness
+#
+#   LOCAL (never synced, preserved on the target)
+#     [[host]] entries, per-harness glob + db (machine paths), shell, mux,
+#       behaviors_dir, recipes_dir, hold_backend, [notify], [[bind]], [fence],
+#       [policy], [metrics], [retention], offline
+#
+#   Excluding shell/mux/glob/db sidesteps cross-OS harm (a macOS glob or a pwsh
+#   shell must not land on a Linux/Windows box). Excluding notify/bind/fence/
+#   policy/retention sidesteps secret, safety-control, and local lifecycle
+#   preference propagation.
+#
+# Five verbs:
+#   ax config export-profile     print this box's profile as TOML (diff/pipe).
+#   ax config apply-profile      read a profile on STDIN, merge into the local
+#                                config: atomic write (temp in the config dir +
+#                                rename) with a config.toml.bak.<unixtime> backup,
+#                                printing the diff. No-op + "profile already in
+#                                sync" when nothing changes. Idempotent. This is
+#                                what runs ON each remote. --dry-run just diffs.
+#   ax config sync [--host N|--all] [--dry-run] [--yes]
+#                                runs on the key-holder: pipes export-profile into
+#                                each host's `apply-profile`, dry-run first for the
+#                                diff, confirms (unless --yes), then applies.
+#                                Best-effort per host (an offline host is reported,
+#                                the others still sync) with a final summary.
+#   ax config status [--host N|--all] [--json]
+#                                read-only fleet view: fans out to the configured
+#                                hosts (default all; --host targets one) and prints
+#                                each node's self-reported capability (ax + wire
+#                                version with a compat marker, OS/shell, harnesses)
+#                                and profile-in-sync vs drift, computed by comparing
+#                                each host's profile hash to the local one. Fail-open:
+#                                an offline / no-ax / version-mismatched host is shown
+#                                in that state, never hangs, never aborts the others.
+#                                NB: status compares full profile hashes, so a host
+#                                that merely carries EXTRA local harnesses/fields reads
+#                                as "drift" even though `sync` (a non-destructive push)
+#                                reports it in-sync.
+#   ax config rollback [--host N] [--yes]
+#                                restore the most recent config.toml.bak.<unixtime>
+#                                (written by apply-profile) over the current config:
+#                                atomic, prints which backup and a diff, confirms
+#                                unless --yes. No backup => says so and changes
+#                                nothing. --host runs it on a remote over the transport.
+#
+# Sender-side lint: export-profile / sync REFUSE to send a profile whose any
+# value matches a secret pattern (sk-, "Bearer ", token=, password, api-key) or
+# an absolute home path (/Users/, /home/, C:/Users/). Keep secrets in env vars,
+# not in launch templates or args.

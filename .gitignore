@@ -1,0 +1,14 @@
+/ax
+/ax.exe
+/ax-linux-*
+/main
+/dist/
+
+# Coordinator / LLM internal artifacts — never publish to the OSS repo.
+# Enforced by guard_test.go (TestNoInternalArtifactsTracked), runs under go test ./...
+.coordinator/
+CLAUDE.md
+**/CLAUDE.md
+*.claude.md
+.claude/
+docs/
