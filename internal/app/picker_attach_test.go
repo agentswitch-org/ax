@@ -114,7 +114,7 @@ func TestPickerSingleLocalAliasReopensRealSessionID(t *testing.T) {
 	if strings.Contains(open.cmd, alias) {
 		t.Fatalf("open command still references alias %q: %s", alias, open.cmd)
 	}
-	if !strings.Contains(open.cmd, real) || !strings.Contains(open.cmd, " attach ") {
+	if !strings.Contains(open.cmd, real) || !shellCommandHasArg(open.cmd, "attach") {
 		t.Fatalf("open command = %q, want an attach command for real id %q", open.cmd, real)
 	}
 }
@@ -246,9 +246,15 @@ func TestPickerSingleLocalMissingWindowReopensLiveHolder(t *testing.T) {
 	if open.sessionID != id || !open.focus {
 		t.Fatalf("open = %#v, want focused replacement for %q", open, id)
 	}
-	if !strings.Contains(open.cmd, " attach ") || !strings.Contains(open.cmd, id) {
+	if !shellCommandHasArg(open.cmd, "attach") || !strings.Contains(open.cmd, id) {
 		t.Fatalf("open command = %q, want attach command for %q", open.cmd, id)
 	}
+}
+
+func shellCommandHasArg(cmd, arg string) bool {
+	return strings.Contains(cmd, " "+arg+" ") ||
+		strings.Contains(cmd, "'"+arg+"'") ||
+		strings.Contains(cmd, "\""+arg+"\"")
 }
 
 func TestPickerSingleLocalFreshButNotRunningHeartbeatOpensReplacement(t *testing.T) {
@@ -420,4 +426,32 @@ func TestAttachCmdExactSessionIDBeatsStaleAlias(t *testing.T) {
 		}
 	}()
 	App{}.Attach([]string{id, "--cmd", "resume-exact"})
+}
+
+func TestAttachReadsAndRemovesCommandFile(t *testing.T) {
+	home := isolate(t)
+	setupPickerAttachState(t)
+	const id = "00000000-0000-0000-0000-000000000303"
+	writeClaudeTranscript(t, home, id, "exact target")
+	path := filepath.Join(t.TempDir(), "cmd.txt")
+	if err := os.WriteFile(path, []byte("resume-from-file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orig := attachHolderFn
+	attachHolderFn = func(id, cmd, adopt string) { panic(attachCalled{id: id, cmd: cmd, adopt: adopt}) }
+	defer func() { attachHolderFn = orig }()
+
+	defer func() {
+		c, ok := recover().(attachCalled)
+		if !ok {
+			t.Fatalf("attach did not enter holder client with captured call")
+		}
+		if c.id != id || c.cmd != "resume-from-file" || c.adopt != "" {
+			t.Fatalf("holder call = %#v, want exact id %q and command file contents", c, id)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("command file still exists after attach parse: %v", err)
+		}
+	}()
+	App{}.Attach([]string{id, "--cmd-file", path})
 }

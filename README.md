@@ -68,6 +68,22 @@ user `Path`.
 Manual install is also fine: download `ax_<version>_windows_<arch>.zip` from
 the latest GitHub release, extract `ax.exe`, and place it on `Path`.
 
+### Release candidates
+
+Release candidates use tags such as `v0.1.1-rc.1`. They publish GitHub
+prerelease assets and a separate Homebrew cask:
+
+```sh
+brew install --cask agentswitch-org/ax/ax-rc
+curl -fsSL https://agentswitch.org/install.sh | AX_RELEASE_TAG=v0.1.1-rc.1 sh
+```
+
+On Windows:
+
+```powershell
+$env:AX_RELEASE_TAG = 'v0.1.1-rc.1'; irm https://agentswitch.org/install.ps1 | iex
+```
+
 ### Developer installs
 
 With Go 1.26.4 or newer:

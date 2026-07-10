@@ -75,8 +75,10 @@ changelog:
       - "^chore:"
 
 release:
+  prerelease: auto
+  make_latest: "{{ if .Prerelease }}false{{ else }}true{{ end }}"
   header: |
-    ## ax v0.1.0: first public release
+    ## ax {{ .Tag }}
 
     ax is a daemonless control substrate for command-line coding agents. It turns local and
     remote Claude Code, Codex, opencode, and pi sessions into addressable workers that can be
@@ -150,7 +152,7 @@ release:
 # When TAP_GITHUB_TOKEN is empty, keep generating the cask in dist/ but skip
 # pushing to the tap so the rest of the release can complete.
 homebrew_casks:
-  - name: ax
+  - name: "{{ if .Prerelease }}ax-rc{{ else }}ax{{ end }}"
     repository:
       owner: agentswitch-org
       name: ax-homebrew

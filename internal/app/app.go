@@ -657,7 +657,7 @@ func (a App) resolveDir(cfg config.Config, s session.Session) (string, bool) {
 // dies within seconds of launch, instead of flashing away; --wait/detached runs
 // don't pass it (nobody is watching, and a block would hang the caller).
 func heartbeat(id, cmd string) string {
-	return fmt.Sprintf("%s run --hold %s %s", shell.Invoke(self()), shellQuote(id), shellQuote(cmd))
+	return runWrapperShellCommand(id, cmd, "", true)
 }
 
 // heldWindowCmd is the shell command a tmux window runs to start (or reattach) a
@@ -673,7 +673,7 @@ func heldWindowCmd(id, cmd string) string {
 	}
 	switch hold.Backend() {
 	case hold.BackendNative:
-		return fmt.Sprintf("%s attach %s --cmd %s", shell.Invoke(self()), shellQuote(id), shellQuote(cmd))
+		return attachWrapperShellCommand(id, cmd, "")
 	case hold.BackendDtach:
 		if hold.Available() {
 			return fmt.Sprintf("dtach -A %s %s", shellQuote(hold.Sock(id)), heartbeat(id, cmd))
@@ -688,15 +688,13 @@ func heldWindowCmd(id, cmd string) string {
 // heartbeats under it, aliases the endpoint, and re-tags the window. Without a
 // holder it degrades to the unheld adopt wrapper.
 func heldAdoptCmd(axid, harness, cmd string) string {
-	inner := fmt.Sprintf("%s run --hold --adopt %s %s %s",
-		shell.Invoke(self()), shellQuote(harness), shellQuote(axid), shellQuote(cmd))
+	inner := runWrapperShellCommand(axid, cmd, harness, true)
 	if mux.IsProcess() {
 		return inner
 	}
 	switch hold.Backend() {
 	case hold.BackendNative:
-		return fmt.Sprintf("%s attach %s --adopt %s --cmd %s",
-			shell.Invoke(self()), shellQuote(axid), shellQuote(harness), shellQuote(cmd))
+		return attachWrapperShellCommand(axid, cmd, harness)
 	case hold.BackendDtach:
 		if hold.Available() {
 			return fmt.Sprintf("dtach -A %s %s", shellQuote(hold.Sock(axid)), inner)
@@ -711,9 +709,9 @@ func heldAdoptCmd(axid, harness, cmd string) string {
 func execHeldAdopt(axid, harness, cmd string) {
 	ax := self()
 	if hold.Backend() == hold.BackendNative {
-		execReplaceFn(ax, []string{ax, "attach", axid, "--adopt", harness, "--cmd", cmd}, os.Environ())
+		execReplaceFn(ax, append([]string{ax}, attachWrapperArgs(axid, cmd, harness)...), os.Environ())
 	}
-	run := []string{"run", "--hold", "--adopt", harness, axid, cmd}
+	run := runWrapperArgsWith(axid, cmd, harness, true)
 	if hold.Backend() == hold.BackendDtach {
 		if dtach, ok := hold.Path(); ok {
 			execReplaceFn(dtach, append([]string{"dtach", "-A", hold.Sock(axid), ax}, run...), os.Environ())
@@ -757,7 +755,12 @@ func (a App) remoteAttachCmd(h config.Host, id string, override *string) string 
 // id, with "--adopt <harness>" for a mint-its-own-id launch; the session may
 // not exist yet on that path.
 func (a App) Attach(args []string) {
-	id, override, cmd, hasCmd, adopt := parseAttachArgs(args)
+	id, override, cmd, hasCmd, adopt, parseErr := parseAttachArgs(args)
+	if parseErr != nil {
+		fmt.Fprintln(os.Stderr, "ax:", parseErr)
+		exitFn(2)
+		return
+	}
 	if id == "" {
 		fmt.Fprintln(os.Stderr, "usage: ax attach <id> [--args <flags>]")
 		exitFn(2)
@@ -832,10 +835,11 @@ func (a App) Attach(args []string) {
 }
 
 // parseAttachArgs pulls the id, an optional "--args <flags>" override, and the
-// internal "--cmd <command>" / "--adopt <harness>" pair out of the attach argv.
+// internal "--cmd <command>" / "--cmd-file <path>" / "--adopt <harness>" pair
+// out of the attach argv.
 // hasCmd distinguishes a present-but-empty --cmd (viewer mode, attach-only)
 // from no --cmd at all (reconstruct the command from the index).
-func parseAttachArgs(args []string) (id string, override *string, cmd string, hasCmd bool, adopt string) {
+func parseAttachArgs(args []string) (id string, override *string, cmd string, hasCmd bool, adopt string, err error) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--args":
@@ -851,6 +855,20 @@ func parseAttachArgs(args []string) (id string, override *string, cmd string, ha
 				cmd = args[i+1]
 				i++
 			}
+			continue
+		case "--cmd-file":
+			hasCmd = true
+			if i+1 >= len(args) {
+				return id, override, cmd, hasCmd, adopt, fmt.Errorf("--cmd-file needs a path")
+			}
+			path := args[i+1]
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				return id, override, cmd, hasCmd, adopt, fmt.Errorf("--cmd-file %s: %w", path, readErr)
+			}
+			_ = os.Remove(path)
+			cmd = string(data)
+			i++
 			continue
 		case "--adopt":
 			if i+1 < len(args) {
@@ -929,10 +947,10 @@ func execHeldEnv(id, cmd string, extraEnv []string) {
 	}
 	if hold.Backend() == hold.BackendDtach {
 		if dtach, ok := hold.Path(); ok {
-			execReplaceFn(dtach, []string{"dtach", "-A", hold.Sock(id), ax, "run", "--hold", id, cmd}, env)
+			execReplaceFn(dtach, append([]string{"dtach", "-A", hold.Sock(id), ax}, runWrapperArgsWith(id, cmd, "", true)...), env)
 		}
 	}
-	if err := execReplaceFn(ax, []string{ax, "run", "--hold", id, cmd}, env); err != nil {
+	if err := execReplaceFn(ax, append([]string{ax}, runWrapperArgsWith(id, cmd, "", true)...), env); err != nil {
 		fmt.Fprintln(os.Stderr, "ax:", err)
 		os.Exit(1)
 	}

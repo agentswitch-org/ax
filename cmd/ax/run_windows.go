@@ -35,25 +35,15 @@ import (
 // set up it falls back to a plain exec (liveness only).
 func runHeartbeat(args []string) int {
 	// Flags precede the id/command, exactly as on unix: "--adopt <harness>"
-	// marks a mint-its-own-id harness, "--hold" keeps a fast failure on screen.
-	adopt, holdFail := "", false
-	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
-		switch args[0] {
-		case "--hold":
-			holdFail, args = true, args[1:]
-		case "--adopt":
-			if len(args) < 2 {
-				return 2
-			}
-			adopt, args = args[1], args[2:]
-		default:
-			return 2
-		}
-	}
-	if len(args) < 2 {
+	// marks a mint-its-own-id harness, "--hold" keeps a fast failure on screen,
+	// and "--cmd-file <path>" keeps long rendered commands out of CreateProcess
+	// argv strings.
+	parsed, err := parseRunArgs(args)
+	if err != nil {
 		return 2
 	}
-	id, command := args[0], args[1]
+	id, command := parsed.id, parsed.command
+	adopt, holdFail := parsed.adopt, parsed.holdFail
 	axlog.Printf("run %s: %s", id, command)
 	start := time.Now()
 

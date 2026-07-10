@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/agentswitch-org/ax/internal/axdir"
 	"github.com/agentswitch-org/ax/internal/axlog"
 	"github.com/agentswitch-org/ax/internal/config"
 	"github.com/agentswitch-org/ax/internal/fence"
@@ -537,9 +538,11 @@ func (a App) runLaunch(harness string, o launchOpts, ctx launchCtx) {
 		a.runWait(id, cmd, env, group, adoptAs, o)
 	case a.mux.Active():
 		title := launchWindowTitle(o.name, harness, group)
-		held := heldWindowCmd(id, cmd)
+		var held string
 		if adoptAs != "" {
 			held = heldAdoptCmd(id, adoptAs, cmd)
+		} else {
+			held = heldWindowCmd(id, cmd)
 		}
 		// Group the window into its project's (or configured key's) mux session,
 		// computed from the labels already seeded above. "" (grouping off or no such
@@ -589,12 +592,101 @@ func launchWindowTitle(name, harness, group string) string {
 	return title
 }
 
+const runCommandSpillThreshold = 8192
+
 func runWrapperArgs(id, cmd, adopt string) []string {
+	return runWrapperArgsWith(id, cmd, adopt, false)
+}
+
+func runWrapperArgsWith(id, cmd, adopt string, hold bool) []string {
 	args := []string{"run"}
+	if hold {
+		args = append(args, "--hold")
+	}
 	if adopt != "" {
 		args = append(args, "--adopt", adopt)
 	}
+	if path, ok := spillRunCommand(id, cmd); ok {
+		args = append(args, "--cmd-file", path, id)
+		return args
+	}
 	return append(args, id, cmd)
+}
+
+func runWrapperShellCommand(id, cmd, adopt string, hold bool) string {
+	args := runWrapperArgsWith(id, cmd, adopt, hold)
+	quoted := make([]string, 0, len(args)+1)
+	quoted = append(quoted, shell.Invoke(self()))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func attachWrapperArgs(id, cmd, adopt string) []string {
+	args := []string{"attach", id}
+	if adopt != "" {
+		args = append(args, "--adopt", adopt)
+	}
+	if path, ok := spillRunCommand(id, cmd); ok {
+		return append(args, "--cmd-file", path)
+	}
+	return append(args, "--cmd", cmd)
+}
+
+func attachWrapperShellCommand(id, cmd, adopt string) string {
+	args := attachWrapperArgs(id, cmd, adopt)
+	quoted := make([]string, 0, len(args)+1)
+	quoted = append(quoted, shell.Invoke(self()))
+	for _, arg := range args {
+		quoted = append(quoted, shellQuote(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func spillRunCommand(id, cmd string) (string, bool) {
+	if len(cmd) <= runCommandSpillThreshold {
+		return "", false
+	}
+	dir := axdir.State("cmd")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		axlog.Printf("run %s: command spill mkdir: %v", id, err)
+		return "", false
+	}
+	safe := safeCommandFileID(id)
+	f, err := os.CreateTemp(dir, safe+"-*.cmd")
+	if err != nil {
+		axlog.Printf("run %s: command spill create: %v", id, err)
+		return "", false
+	}
+	path := f.Name()
+	if _, err := f.WriteString(cmd); err != nil {
+		f.Close()
+		os.Remove(path)
+		axlog.Printf("run %s: command spill write: %v", id, err)
+		return "", false
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		axlog.Printf("run %s: command spill close: %v", id, err)
+		return "", false
+	}
+	return path, true
+}
+
+func safeCommandFileID(id string) string {
+	var b strings.Builder
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "run"
+	}
+	return b.String()
 }
 
 func inheritedGroupParent(o launchOpts) (group, parent string) {

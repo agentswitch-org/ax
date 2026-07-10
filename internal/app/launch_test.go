@@ -137,6 +137,66 @@ func TestParseLaunchBehaviorMutualExclusion(t *testing.T) {
 	}
 }
 
+func TestRunWrapperArgsSpillsLargeCommand(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	cmd := "claude --append-system-prompt '" + strings.Repeat("x", runCommandSpillThreshold+1) + "' task"
+
+	args := runWrapperArgsWith("sid", cmd, "codex", true)
+	if len(args) != 7 || args[0] != "run" || args[1] != "--hold" || args[2] != "--adopt" || args[3] != "codex" || args[4] != "--cmd-file" || args[6] != "sid" {
+		t.Fatalf("runWrapperArgsWith() = %#v", args)
+	}
+	data, err := os.ReadFile(args[5])
+	if err != nil {
+		t.Fatalf("spilled command not readable: %v", err)
+	}
+	if string(data) != cmd {
+		t.Fatalf("spilled command mismatch")
+	}
+}
+
+func TestRunWrapperShellCommandOmitsLargeInlineCommand(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	cmd := "claude --append-system-prompt '" + strings.Repeat("x", runCommandSpillThreshold+1) + "' task"
+
+	got := runWrapperShellCommand("sid", cmd, "", true)
+	if !strings.Contains(got, "--cmd-file") {
+		t.Fatalf("runWrapperShellCommand did not spill large command: %q", got)
+	}
+	if strings.Contains(got, strings.Repeat("x", 128)) {
+		t.Fatalf("runWrapperShellCommand kept large behavior inline: %q", got)
+	}
+}
+
+func TestAttachWrapperArgsSpillsLargeCommand(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	cmd := "claude --append-system-prompt '" + strings.Repeat("x", runCommandSpillThreshold+1) + "' task"
+
+	args := attachWrapperArgs("sid", cmd, "codex")
+	if len(args) != 6 || args[0] != "attach" || args[1] != "sid" || args[2] != "--adopt" || args[3] != "codex" || args[4] != "--cmd-file" {
+		t.Fatalf("attachWrapperArgs() = %#v", args)
+	}
+	data, err := os.ReadFile(args[5])
+	if err != nil {
+		t.Fatalf("spilled command not readable: %v", err)
+	}
+	if string(data) != cmd {
+		t.Fatalf("spilled command mismatch")
+	}
+}
+
+func TestAttachWrapperShellCommandOmitsLargeInlineCommand(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	cmd := "claude --append-system-prompt '" + strings.Repeat("x", runCommandSpillThreshold+1) + "' task"
+
+	got := attachWrapperShellCommand("sid", cmd, "")
+	if !strings.Contains(got, "--cmd-file") {
+		t.Fatalf("attachWrapperShellCommand did not spill large command: %q", got)
+	}
+	if strings.Contains(got, strings.Repeat("x", 128)) {
+		t.Fatalf("attachWrapperShellCommand kept large behavior inline: %q", got)
+	}
+}
+
 // axEnv sets both AX_RUN (current) and AX_GROUP (deprecated alias, same value)
 // in the launched child's environment, so anything reading only the old name
 // keeps working.

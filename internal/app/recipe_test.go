@@ -110,7 +110,7 @@ func TestRunRecipeMuxPathUsesHeldWrapper(t *testing.T) {
 	if !strings.Contains(call.title, runID+"/smoke") {
 		t.Fatalf("title = %q, want run/name", call.title)
 	}
-	if !strings.Contains(call.cmd, "AX_RECIPE") || (!strings.Contains(call.cmd, " attach ") && !strings.Contains(call.cmd, " run ")) {
+	if !strings.Contains(call.cmd, "AX_RECIPE") || (!shellCommandHasArg(call.cmd, "attach") && !shellCommandHasArg(call.cmd, "run")) {
 		t.Fatalf("mux command does not preserve recipe env and holder wrapper: %q", call.cmd)
 	}
 }

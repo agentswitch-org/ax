@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -37,24 +36,14 @@ func runHeartbeat(args []string) int {
 	// "--hold" (set on window/attach launches, not --wait/detached ones) keeps
 	// the terminal open showing the failure when the harness dies right after
 	// launch, so a bad resume reads as an error instead of a flash-closed window.
-	adopt, holdFail := "", false
-	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
-		switch args[0] {
-		case "--hold":
-			holdFail, args = true, args[1:]
-		case "--adopt":
-			if len(args) < 2 {
-				return 2
-			}
-			adopt, args = args[1], args[2:]
-		default:
-			return 2
-		}
-	}
-	if len(args) < 2 {
+	// "--cmd-file <path>" is an internal spill path for long rendered harness
+	// commands, mainly to avoid Windows CreateProcess command-line limits.
+	parsed, err := parseRunArgs(args)
+	if err != nil {
 		return 2
 	}
-	id, command := args[0], args[1]
+	id, command := parsed.id, parsed.command
+	adopt, holdFail := parsed.adopt, parsed.holdFail
 	axlog.Printf("run %s: %s", id, command)
 	start := time.Now()
 
