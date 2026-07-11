@@ -68,6 +68,17 @@ user `Path`.
 Manual install is also fine: download `ax_<version>_windows_<arch>.zip` from
 the latest GitHub release, extract `ax.exe`, and place it on `Path`.
 
+### Updating
+
+Re-run the same installer command to update. On Windows, the installer places
+each release under `%LOCALAPPDATA%\ax\versions\<version>` and moves that
+directory to the front of the user `Path`, so updates work even when an older
+`ax.exe` is still running. Homebrew users should update with:
+
+```sh
+brew upgrade --cask agentswitch-org/ax/ax
+```
+
 ### Release candidates
 
 Release candidates use tags such as `v0.1.1-rc.1`. They publish GitHub
