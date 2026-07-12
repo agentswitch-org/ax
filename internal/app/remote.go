@@ -1,9 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +20,40 @@ import (
 // shellWarned records which hosts have already emitted the missing-shell
 // warning, so warnMissingShell fires at most once per host per process.
 var shellWarned sync.Map
+
+// shellWarnOut is where warnMissingShell writes; nil means os.Stderr, resolved
+// at write time. shellWarnMu guards it: the federated fan-out warns from per-host
+// goroutines while bufferShellWarnings swaps the sink on the picker goroutine.
+var (
+	shellWarnMu  sync.Mutex
+	shellWarnOut io.Writer
+)
+
+// bufferShellWarnings redirects missing-shell warnings into a buffer and
+// returns a flush that restores the previous sink and writes anything collected
+// to os.Stderr. The picker wraps its alt-screen lifetime in this: the federated
+// fan-out shells out to each host while the frame is live, and a warning
+// printed to stderr then lands inside the rendered frame and corrupts the
+// display. Buffering keeps the warning out of the frame without losing it (it
+// flushes once the terminal is back on the normal screen). A fan-out goroutine
+// that warns after flush writes straight to stderr, which is safe for the same
+// reason.
+func bufferShellWarnings() (flush func()) {
+	var buf bytes.Buffer
+	shellWarnMu.Lock()
+	prev := shellWarnOut
+	shellWarnOut = &buf
+	shellWarnMu.Unlock()
+	return func() {
+		shellWarnMu.Lock()
+		shellWarnOut = prev
+		out := buf.Bytes()
+		shellWarnMu.Unlock()
+		if len(out) > 0 {
+			os.Stderr.Write(out)
+		}
+	}
+}
 
 // warnMissingShell warns, once per host, that an ssh host with no shell set
 // falls back to POSIX quoting. A POSIX-quoted argv mis-quotes on a
@@ -39,7 +75,13 @@ func warnMissingShell(h config.Host) {
 	if _, seen := shellWarned.LoadOrStore(h.Name, struct{}{}); seen {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "ax: host %q: no shell set, defaulting to POSIX quoting. "+
+	shellWarnMu.Lock()
+	defer shellWarnMu.Unlock()
+	out := io.Writer(os.Stderr)
+	if shellWarnOut != nil {
+		out = shellWarnOut
+	}
+	fmt.Fprintf(out, "ax: host %q: no shell set, defaulting to POSIX quoting. "+
 		"If this host runs PowerShell/Windows, set shell = \"pwsh\" in its [[host]] block to avoid mis-quoting.\n", h.Name)
 }
 

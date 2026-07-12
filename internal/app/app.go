@@ -84,7 +84,13 @@ func hostsByName(hosts []config.Host) map[string]config.Host {
 // loading skeleton, so a slow or unreachable host never stalls the picker's
 // startup (see finder.View.Load).
 func (a App) Pick() {
+	// The federated fan-out (and any in-picker remote callback) shells out to
+	// each host while the alt-screen is up, so missing-shell warnings are
+	// buffered for the picker's lifetime and flushed to stderr once the
+	// terminal is back on the normal screen, never into the live frame.
+	flush := bufferShellWarnings()
 	choice, err := a.find.Pick(finder.View{Load: a.loadPickView})
+	flush()
 	if errors.Is(err, finder.ErrNoSessions) {
 		fmt.Fprintln(os.Stderr, "ax: no sessions found in this view. Start one with 'ax new' or 'ax claude \"your task\"'; use 'ax list --all' for archived local sessions or 'ax list --federated --all' for configured hosts.")
 		return
