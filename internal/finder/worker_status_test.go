@@ -75,6 +75,103 @@ func TestBuildMetaWorkerAttention(t *testing.T) {
 	})
 }
 
+// TestBuildMetaSupervisorWaitsOnWorkers pins the fix for the needs-you false
+// positive: a top-level owner that fired a blocked hook but still has a
+// live descendant worker is supervising, not stuck, so it reads "waiting on
+// workers" (calm), never "needs you". A real human ask still overrides that, and
+// an owner with no live children still needs the human.
+func TestBuildMetaSupervisorWaitsOnWorkers(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	live := func(ids ...string) map[string]string {
+		out := map[string]string{}
+		for i, id := range ids {
+			out[id] = fmt.Sprintf("s:0.%d", i)
+		}
+		return out
+	}
+
+	t.Run("blocked owner with live child waits on workers", func(t *testing.T) {
+		state.WriteHook("coord", "blocked")
+		sessions := []session.Session{
+			{ID: "coord", Group: "run1"},
+			{ID: "w1", Group: "run1", Parent: "coord"},
+		}
+		m := BuildMeta(sessions, live("coord", "w1"), nil)["coord"]
+		if m.Waiting == "input" {
+			t.Fatalf("supervising owner Waiting = input (needs you), want waiting on workers")
+		}
+		if m.Waiting != "children" {
+			t.Fatalf("supervising owner Waiting = %q, want children (waiting)", m.Waiting)
+		}
+	})
+
+	// The exact c87700b8 shape: an owner whose blocked hook has aged out
+	// (Blocked stays true, it is a durable marker) but whose transcript keeps its
+	// activity working, so it reads working-live in the LIFE column. It must still
+	// not badge needs-you while its worker is live.
+	t.Run("working-live owner with live child is not needs-you", func(t *testing.T) {
+		tf := filepath.Join(t.TempDir(), "coord.jsonl")
+		if err := os.WriteFile(tf, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now()
+		if err := os.Chtimes(tf, now, now); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.WriteHook("c87700b8", "blocked"); err != nil {
+			t.Fatal(err)
+		}
+		// Age the blocked hook past the freshness window so activity falls back to
+		// the recent transcript (working) while Blocked stays true.
+		stale := now.Add(-2 * state.HookFresh)
+		if err := os.Chtimes(filepath.Join(axdir.State("hookstate"), "c87700b8"), stale, stale); err != nil {
+			t.Fatal(err)
+		}
+		sessions := []session.Session{
+			{ID: "c87700b8", Group: "chautauqua", File: tf},
+			{ID: "w1", Group: "chautauqua", Parent: "c87700b8"},
+		}
+		m := BuildMeta(sessions, live("c87700b8", "w1"), nil)["c87700b8"]
+		if m.DisplayPhase != view.PhaseLiveWorking {
+			t.Fatalf("owner display phase = %q, want %q (working-live)", m.DisplayPhase, view.PhaseLiveWorking)
+		}
+		if m.Waiting == "input" {
+			t.Fatalf("working-live supervising owner badged needs-you (Waiting=input)")
+		}
+		if m.Waiting != "children" {
+			t.Fatalf("working-live supervising owner Waiting = %q, want children", m.Waiting)
+		}
+	})
+
+	t.Run("blocked owner with no live child still needs you", func(t *testing.T) {
+		state.WriteHook("lonely", "blocked")
+		// The child exists but is not live (no locator, no heartbeat): a dead
+		// worker does not make its owner a supervisor.
+		sessions := []session.Session{
+			{ID: "lonely", Group: "run2"},
+			{ID: "deadkid", Group: "run2", Parent: "lonely"},
+		}
+		m := BuildMeta(sessions, live("lonely"), nil)["lonely"]
+		if m.Waiting != "input" {
+			t.Fatalf("owner with no live child Waiting = %q, want input (needs you)", m.Waiting)
+		}
+	})
+
+	t.Run("pending ask surfaces even with a live child", func(t *testing.T) {
+		if err := ask.Save("asker", ask.Pending{Question: "which branch?"}); err != nil {
+			t.Fatal(err)
+		}
+		sessions := []session.Session{
+			{ID: "asker", Group: "run3"},
+			{ID: "w1", Group: "run3", Parent: "asker"},
+		}
+		m := BuildMeta(sessions, live("asker", "w1"), nil)["asker"]
+		if m.Waiting != "input" {
+			t.Fatalf("owner with a pending ask Waiting = %q, want input (needs you) even with live children", m.Waiting)
+		}
+	})
+}
+
 func TestBuildMetaInvalidLiveRecordNotWorking(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	id := "old-claude"

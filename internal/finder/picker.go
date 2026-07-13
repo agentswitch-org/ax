@@ -3093,6 +3093,10 @@ func clamp(n, lo, hi int) int {
 func BuildMeta(sessions []session.Session, locators map[string]string, remoteState map[string]state.Runtime) map[string]view.RowMeta {
 	rt := state.ComputeAll(sessions)
 	pending := ask.List() // sessions blocked on a human (`ax ask`)
+	// A top-level session with a live descendant worker is supervising, not stuck:
+	// an idle/blocked supervisor is waiting on its workers, not on the human, so it
+	// reads calm ("waiting") instead of "needs you".
+	liveDesc := liveDescendants(sessions, locators, rt, remoteState)
 	meta := make(map[string]view.RowMeta, len(sessions))
 	for _, s := range sessions {
 		r := rt[s.ID]
@@ -3124,25 +3128,21 @@ func BuildMeta(sessions []session.Session, locators map[string]string, remoteSta
 		if s.Host == "" && m.State == view.StateLive && m.Locator == "" {
 			m.Detached = true
 		}
-		// A session with a parent is a worker supervised by its owner. Its
-		// pending ax ask is still blocked input until a real Done/Failed marker
-		// arrives; do not synthesize a terminal Done state from the question.
+		// A session with a parent is a worker supervised by its owner; a top-level
+		// session with a live descendant worker is itself a supervisor. An idle or
+		// blocked supervisor is waiting on its workers, not on the human, so it
+		// reads calm ("waiting") instead of "needs you". An explicit ax ask still
+		// overrides this below: a real question the owner asked reaches the human
+		// even while its workers run.
 		isWorker := s.Parent != ""
-		if _, ok := pending[s.ID]; ok {
-			// A pending question surfaces as attention. A session that tagged
-			// success and then asked is presenting its RESULT, not stuck: that is
-			// the done-review state, distinct from needs-you.
-			switch {
-			case s.Outcome == "success":
-				m.Waiting = "done"
-			default:
-				m.Waiting = "input"
-			}
-		}
+		supervising := !isWorker && liveDesc[s.ID]
 		if s.Host == "" && m.State == view.StateLive && state.Blocked(s.ID) {
-			if isWorker {
+			switch {
+			case isWorker:
 				m.Done = true // its owner harvests it; a finished turn is done
-			} else {
+			case supervising:
+				m.Waiting = "children" // blocked between turns, but children still run: waiting on workers
+			default:
 				m.Waiting = "input" // the harness's own hook says it is blocked on the user
 			}
 		}
@@ -3152,10 +3152,55 @@ func BuildMeta(sessions []session.Session, locators map[string]string, remoteSta
 		if r.Waiting != "" { // a remote owner reported its own blocked session
 			m.Waiting = r.Waiting
 		}
+		// A pending ax ask is the one signal that reaches the human even while
+		// workers run: applied last so a real question outranks the calm
+		// waiting-on-workers state. A session that tagged success and then asked is
+		// presenting its RESULT (done-review), not stuck; never synthesize a
+		// terminal Done state from the question itself.
+		if _, ok := pending[s.ID]; ok {
+			switch {
+			case s.Outcome == "success":
+				m.Waiting = "done"
+			default:
+				m.Waiting = "input"
+			}
+		}
 		displayRT := state.Runtime{State: m.State, Activity: m.Activity, Waiting: m.Waiting, Done: m.Done, Failed: m.Failed}
 		m.Lifecycle = state.Lifecycle(displayRT)
 		m.DisplayPhase = state.DisplayPhase(displayRT)
 		meta[session.Key(s)] = m
 	}
 	return meta
+}
+
+// liveDescendants reports, per session id, whether it has at least one
+// transitively-live descendant worker. It walks each live session up its parent
+// chain and marks every ancestor, so a deeper worker tree still marks the root
+// coordinator. Liveness mirrors the per-row derivation in BuildMeta: a heartbeat
+// (or an open viewer window) locally, or the owner's reported state for a remote
+// row. A supervisor with children in flight reads "waiting on workers", not
+// "needs you", even when its own harness hook says it is idle/blocked.
+func liveDescendants(sessions []session.Session, locators map[string]string, rt, remoteState map[string]state.Runtime) map[string]bool {
+	parentOf := make(map[string]string, len(sessions))
+	isLive := make(map[string]bool, len(sessions))
+	for _, s := range sessions {
+		parentOf[s.ID] = s.Parent
+		r := rt[s.ID]
+		if rs, ok := remoteState[session.Key(s)]; ok {
+			r = rs
+		}
+		isLive[s.ID] = r.State == state.Live || locators[session.Key(s)] != ""
+	}
+	out := make(map[string]bool)
+	for _, s := range sessions {
+		if !isLive[s.ID] {
+			continue
+		}
+		seen := map[string]bool{}
+		for p := s.Parent; p != "" && !seen[p]; p = parentOf[p] {
+			seen[p] = true
+			out[p] = true
+		}
+	}
+	return out
 }
