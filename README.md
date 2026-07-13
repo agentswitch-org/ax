@@ -216,7 +216,7 @@ The shell verbs let one session drive others: launch workers, read turns, send
 messages, wait for completion, run an accept check, and stop a run. Fences on
 cost, fan-out, depth, and time apply across the run.
 
-ax ships no installed recipes, behaviors, coordinator prompt, or presets. The `recipes/` and `behaviors/` directories in this repo are source files to copy from. Configure `behaviors_dir` and `recipes_dir` to point at your own files, then use the compose chooser (`c`, `C`, or `ctrl-n`) to launch a plain session, a behavior-backed prompt, or a recipe script.
+ax ships no installed recipes, behaviors, coordinator prompt, or presets. The `recipes/` and `behaviors/` directories in this repo are source files to copy from. When `behaviors_dir` and `recipes_dir` are unset, they default to `behaviors` and `recipes` sibling directories next to your config file, so files dropped there are picked up with no config edit. Set either to point at your own path to override the default. Then use the compose chooser (`c`, `C`, or `ctrl-n`) to launch a plain session, a behavior-backed prompt, or a recipe script.
 
 ## Supported platforms
 

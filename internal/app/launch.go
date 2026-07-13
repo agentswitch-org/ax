@@ -75,9 +75,14 @@ type launchOpts struct {
 	closeOnDone  bool   // close the window and end the session when the task concludes, instead of halting in the done state
 	keepLive     bool   // opt out of delayed reaping after a parented task worker concludes
 	keepLiveFor  string // keep-live lease duration (--keep-live-for DUR); implies keepLive, expires into reapable
-	jsonOut      bool
-	fenceMode    string // "best-effort" to launch an un-fenceable harness unfenced
-	dir          string
+	// attach forces the launched window to grab foreground focus even when origin
+	// is "agent" (i.e. this launch was spawned by a recipe, not typed by a human).
+	// A recipe that bootstraps a single human-facing session (the coordinator) sets
+	// it so the human lands inside that session instead of the recipe wrapper.
+	attach    bool
+	jsonOut   bool
+	fenceMode string // "best-effort" to launch an un-fenceable harness unfenced
+	dir       string
 	// cleanEnv starts the child from a minimal environment (a small allowlist,
 	// the AX_* control vars, and the overrides below), so a worker never silently
 	// inherits stray auth tokens or project config. envSet are explicit
@@ -549,7 +554,9 @@ func (a App) runLaunch(harness string, o launchOpts, ctx launchCtx) {
 		// label) keeps the flat current-session placement.
 		target := muxTargetFor(labels, cfg.MuxGroup)
 		// Foreground for a human watching; background when fanned out or unattended.
-		if err := a.mux.Open(o.dir, title, axEnvPrefix(env)+held, id, target, origin == "human" && !o.unattend); err != nil {
+		// --attach forces foreground even for a recipe-spawned (agent-origin) session,
+		// so a recipe that bootstraps one interactive session lands the human in it.
+		if err := a.mux.Open(o.dir, title, axEnvPrefix(env)+held, id, target, (origin == "human" || o.attach) && !o.unattend); err != nil {
 			// The id/group were already printed, so a caller may hold a handle to a
 			// session whose window never opened; surface the failure rather than
 			// leave it silent (a too-long command, a dead mux socket).
@@ -1561,6 +1568,9 @@ func parseLaunch(argv []string) (launchOpts, error) {
 			o.unattend = true
 			continue
 		case "--interactive":
+			continue
+		case "--attach":
+			o.attach = true
 			continue
 		case "--headless":
 			o.headless = true

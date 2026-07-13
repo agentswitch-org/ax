@@ -30,7 +30,8 @@ ax "$HARNESS" "$GOAL" \
   --label role=coordinator \
   --label recipe=coding-project-coordinator \
   --keep-live \
-  --interactive
+  --interactive \
+  --attach
 # Open-ended project: leave --max-cost/--max-tokens off (a tripped fence
 # cascade-kills the run). Opt in for a harder worker cap or token stop:
 #   --max-workers 4 --max-tokens 5000000

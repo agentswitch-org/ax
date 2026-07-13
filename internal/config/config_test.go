@@ -100,6 +100,49 @@ recipes_dir = "C:\\Users\\noah\\ax\\recipes"
 	}
 }
 
+// With no explicit path set, behaviors_dir/recipes_dir default to a sibling of
+// the config file, so content dropped next to the config is picked up with no
+// config edit. This holds whether the config file is present-but-silent or
+// absent entirely.
+func TestContentDirsDefaultToConfigSibling(t *testing.T) {
+	wantBehaviors := func() string { return filepath.Join(filepath.Dir(Path()), "behaviors") }
+	wantRecipes := func() string { return filepath.Join(filepath.Dir(Path()), "recipes") }
+
+	// Config file present but with no behaviors_dir/recipes_dir keys.
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(`
+[[harness]]
+name = "claude"
+args = "--foo"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AX_CONFIG", path)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BehaviorsDir != wantBehaviors() {
+		t.Fatalf("empty-config BehaviorsDir = %q, want sibling %q", cfg.BehaviorsDir, wantBehaviors())
+	}
+	if cfg.RecipesDir != wantRecipes() {
+		t.Fatalf("empty-config RecipesDir = %q, want sibling %q", cfg.RecipesDir, wantRecipes())
+	}
+
+	// Config file absent entirely.
+	t.Setenv("AX_CONFIG", filepath.Join(t.TempDir(), "missing.toml"))
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BehaviorsDir != wantBehaviors() {
+		t.Fatalf("absent-config BehaviorsDir = %q, want sibling %q", cfg.BehaviorsDir, wantBehaviors())
+	}
+	if cfg.RecipesDir != wantRecipes() {
+		t.Fatalf("absent-config RecipesDir = %q, want sibling %q", cfg.RecipesDir, wantRecipes())
+	}
+}
+
 // The built-in codex and pi templates must carry the flags their current CLIs
 // (codex 0.142.x, pi 0.80.x) need to launch, resume, and run drivably. A drift
 // here (a renamed/dropped flag, or losing the approval bypass) silently breaks

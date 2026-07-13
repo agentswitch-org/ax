@@ -689,6 +689,25 @@ func TestParseLaunchModeAndBilling(t *testing.T) {
 	}
 }
 
+// --attach forces the launched window to the foreground even for an agent-origin
+// (recipe-spawned) session; absent, it stays false so origin decides focus.
+func TestParseLaunchAttach(t *testing.T) {
+	o, err := parseLaunch([]string{"do a thing", "--attach"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.attach {
+		t.Fatalf("expected attach=true with --attach, got %v", o.attach)
+	}
+	d, err := parseLaunch([]string{"do a thing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.attach {
+		t.Fatalf("expected attach=false without --attach, got %v", d.attach)
+	}
+}
+
 // launchMode is the attachability contract: a --wait/--unattended job runs the
 // INTERACTIVE command (its live TUI, attachable under the holder), NOT the
 // screenless `claude -p` headless form; only an explicit --headless selects -p.

@@ -1039,7 +1039,7 @@ func usage() {
      [--run R] [--group R] [--name N] [--parent P] [--label k=v]... [--host H]
      [--max-cost N] [--max-tokens N] [--max-workers N] [--max-depth N] [--timeout D]
      [--write GLOB]... [--no-write] [--no-subagents] [--fence best-effort]
-     [--accept ./check.sh] [--wait] [--unattended] [--interactive] [--headless] [--json] [--dir D] [-- FLAGS]
+     [--accept ./check.sh] [--wait] [--unattended] [--interactive] [--attach] [--headless] [--json] [--dir D] [-- FLAGS]
      [--close-on-done] [--clean-env] [--env KEY=VAL] [--auth subscription|api|env:VAR] [--api]
      [--keep-live] [--keep-live-for D]
 	     [--self-propel [--propel-prompt P] [--propel-until CMD] [--max-idle-turns N]

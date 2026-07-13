@@ -521,6 +521,15 @@ func Path() string {
 	return filepath.Join(base, "ax", "config.toml")
 }
 
+// contentDirDefault is the standard location for a machine-local content
+// directory (recipes, behaviors): a sibling of the config file. It is the
+// fallback ax uses when the user has not set recipes_dir/behaviors_dir, so a
+// file dropped there (e.g. by the coordinator quickstart) is picked up with no
+// config edit. ~ expansion is unnecessary: this is already an absolute path.
+func contentDirDefault(sub string) string {
+	return filepath.Join(filepath.Dir(Path()), sub)
+}
+
 // Load returns the defaults with any user config merged on top. A harness in the
 // user config overlays a default of the same name field by field (each present
 // field wins, including an explicit empty string, so config sync can clear a stale
@@ -530,6 +539,8 @@ func Load() (Config, error) {
 	data, err := os.ReadFile(Path())
 	if err != nil {
 		if os.IsNotExist(err) {
+			cfg.BehaviorsDir = contentDirDefault("behaviors")
+			cfg.RecipesDir = contentDirDefault("recipes")
 			return cfg, nil
 		}
 		return cfg, err
@@ -559,15 +570,26 @@ func Load() (Config, error) {
 	cfg.Policy = user.Policy                 // launch allow/deny fence, user-defined
 	cfg.Notify = user.Notify                 // lifecycle-event hooks, user-defined
 	cfg.Fence = user.Fence                   // read-only fence tuning, user-defined
-	cfg.BehaviorsDir = user.BehaviorsDir     // machine-local behavior content path, user-defined
-	cfg.RecipesDir = user.RecipesDir         // machine-local recipe content path, user-defined
-	cfg.Mux = user.Mux                       // multiplexer backend selector, user-defined
-	cfg.MuxPrefix = user.MuxPrefix           // ax namespace prefix for mux window/session/tab names, user-defined
-	cfg.HoldBackend = user.HoldBackend       // session-holder backend selector, user-defined
-	cfg.DetachPrefix = user.DetachPrefix     // attach-client detach chord prefix rebind, user-defined
-	cfg.DetachKey = user.DetachKey           // attach-client detach chord letter rebind, user-defined
-	cfg.MenuKey = user.MenuKey               // attach-client menu chord letter rebind, user-defined
-	cfg.Metrics = user.Metrics               // Prometheus textfile export gate, user-defined
+	// Machine-local content paths default to a sibling of the config file when
+	// unset, so a recipe/behavior dropped there (coordinator quickstart) shows up
+	// in the compose picker with no config edit. An explicit path always wins.
+	if user.BehaviorsDir != "" {
+		cfg.BehaviorsDir = user.BehaviorsDir
+	} else {
+		cfg.BehaviorsDir = contentDirDefault("behaviors")
+	}
+	if user.RecipesDir != "" {
+		cfg.RecipesDir = user.RecipesDir
+	} else {
+		cfg.RecipesDir = contentDirDefault("recipes")
+	}
+	cfg.Mux = user.Mux                   // multiplexer backend selector, user-defined
+	cfg.MuxPrefix = user.MuxPrefix       // ax namespace prefix for mux window/session/tab names, user-defined
+	cfg.HoldBackend = user.HoldBackend   // session-holder backend selector, user-defined
+	cfg.DetachPrefix = user.DetachPrefix // attach-client detach chord prefix rebind, user-defined
+	cfg.DetachKey = user.DetachKey       // attach-client detach chord letter rebind, user-defined
+	cfg.MenuKey = user.MenuKey           // attach-client menu chord letter rebind, user-defined
+	cfg.Metrics = user.Metrics           // Prometheus textfile export gate, user-defined
 	if userRetention.Retention.AutoRetire != nil {
 		cfg.Retention.AutoRetire = *userRetention.Retention.AutoRetire
 	}
