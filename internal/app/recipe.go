@@ -66,7 +66,20 @@ func (a App) launchRecipe(path, harness, dir string) (recipeID, runID string, er
 	title := launchWindowTitle(name, "recipe", runID)
 	if a.mux != nil && a.mux.Active() {
 		target := muxTargetFor(labels, cfg.MuxGroup)
-		if err := a.mux.Open(chosenDir, title, axEnvPrefix(env)+heldWindowCmd(recipeID, cmd), recipeID, target, true); err != nil {
+		// The wrapper opens in the BACKGROUND (focus=false). It is a bootstrap: the
+		// script it holds launches the human-facing session (a coordinator's nested
+		// `ax <harness> ... --attach`), and that --attach launch is what grabs the
+		// foreground so the human lands inside the running harness. If the wrapper
+		// grabbed the foreground here too, both it and the coordinator would open in
+		// the foreground and the human's landing spot would hinge on the coordinator's
+		// focus switch WINNING A RACE against the wrapper's: when it loses (or the
+		// wrapper's foreground switch sticks, as it does from a picker popup / across a
+		// grouped session), the human is left on the wrapper's held shell instead of
+		// the coordinator. Backgrounding the wrapper removes that race: the coordinator
+		// is the sole foreground switch, so the human deterministically lands in it.
+		// The window is still opened and tracked; it is just not focused, and the human
+		// reaches it (if they want) through the picker like any other background run.
+		if err := a.mux.Open(chosenDir, title, axEnvPrefix(env)+heldWindowCmd(recipeID, cmd), recipeID, target, false); err != nil {
 			// The launch never took, so don't leave a metadata-only orphan session
 			// (which would show up in `ax ls` as a run that never started).
 			meta.Remove(recipeID)

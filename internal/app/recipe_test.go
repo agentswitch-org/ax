@@ -104,8 +104,14 @@ func TestRunRecipeMuxPathUsesHeldWrapper(t *testing.T) {
 		t.Fatalf("mux opens = %d, want 1", len(mx.opens))
 	}
 	call := mx.opens[0]
-	if call.dir != dir || call.sessionID != recipeID || !call.focus {
-		t.Fatalf("mux open call = %#v", call)
+	// The wrapper must open in the BACKGROUND (focus=false): it is a bootstrap whose
+	// held script launches the human-facing session (a coordinator's nested
+	// `ax <harness> ... --attach`), and that --attach launch is the one that grabs the
+	// foreground. If the wrapper also grabbed the foreground, it would compete with
+	// the coordinator for the client and could leave the human on the wrapper's held
+	// shell instead of the coordinator (the v0.1.2-rc.1 blocker). See launchRecipe.
+	if call.dir != dir || call.sessionID != recipeID || call.focus {
+		t.Fatalf("mux open call = %#v (want dir=%q sessionID=%q focus=false)", call, dir, recipeID)
 	}
 	if !strings.Contains(call.title, runID+"/smoke") {
 		t.Fatalf("title = %q, want run/name", call.title)
