@@ -222,8 +222,10 @@ func (t tmux) Open(dir, title, cmd, sessionID, target string, focus bool) error 
 	// background launch places only. An empty target keeps today's flat path:
 	// new-window in the current session.
 	target = prefixName(target)
+	var stray string
 	if target != "" {
-		if err := ensureSession(target); err != nil {
+		var err error
+		if stray, err = ensureSession(target); err != nil {
 			return err
 		}
 	}
@@ -245,6 +247,9 @@ func (t tmux) Open(dir, title, cmd, sessionID, target string, focus bool) error 
 	if wid != "" && sessionID != "" {
 		exec.Command("tmux", "set-option", "-w", "-t", wid, "@ax_session", sessionID).Run()
 	}
+	// The real ax window is now in the session, so the initial default-shell
+	// window ensureSession created is safe to remove (the session outlives it).
+	killStrayWindow(stray)
 	if target != "" && focus {
 		focusTarget := wid
 		if focusTarget == "" {
@@ -338,14 +343,34 @@ func tmuxSessionName(s string) string {
 // opened or moved into it. target is expected to be namespace-prefixed already.
 // tmuxSessionName converts it to the form tmux actually stores before comparing
 // and creating, so "ax:proj" and "ax_proj" are treated as the same session.
-func ensureSession(target string) error {
+//
+// new-session -d always spawns an initial default-shell window (index 0); that
+// window is a stray the moment the real ax window is opened or moved in beside
+// it, so ensureSession returns its window id (captured via -P -F) as stray. The
+// caller kills it AFTER the real window lands, never before (killing a session's
+// last window destroys the session). stray is "" when the session already
+// existed (nothing was created) or when the window id could not be read.
+func ensureSession(target string) (stray string, err error) {
 	sessName := tmuxSessionName(target)
-	if exec.Command("tmux", "has-session", "-t", "="+sessName).Run() != nil {
-		if out, err := exec.Command("tmux", "new-session", "-d", "-s", sessName).CombinedOutput(); err != nil {
-			return tmuxCmdError("tmux new-session "+target, err, out)
-		}
+	if exec.Command("tmux", "has-session", "-t", "="+sessName).Run() == nil {
+		return "", nil
 	}
-	return nil
+	out, err := exec.Command("tmux", "new-session", "-d", "-s", sessName, "-P", "-F", "#{window_id}").CombinedOutput()
+	if err != nil {
+		return "", tmuxCmdError("tmux new-session "+target, err, out)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// killStrayWindow removes the leftover default-shell window ensureSession left
+// behind, once the real ax window is in place. Best-effort: a failure (the
+// window already gone, a since-detached server) is not worth failing the launch
+// over, since the stray is cosmetic. A "" id (session pre-existed) is a no-op.
+func killStrayWindow(stray string) {
+	if stray == "" {
+		return
+	}
+	exec.Command("tmux", "kill-window", "-t", stray).Run()
 }
 
 // Locate matches the @ax_session tag, falling back to the pane's start command,
@@ -604,12 +629,16 @@ func (t tmux) MoveWindow(sessionID, target string) error {
 		return fmt.Errorf("no window running %s", sessionID)
 	}
 	target = prefixName(target)
-	if err := ensureSession(target); err != nil {
+	stray, err := ensureSession(target)
+	if err != nil {
 		return err
 	}
 	if out, err := exec.Command("tmux", "move-window", "-d", "-s", win, "-t", tmuxSessionName(target)+":").CombinedOutput(); err != nil {
 		return fmt.Errorf("move-window: %s", strings.TrimSpace(string(out)))
 	}
+	// The moved window now lives in the session beside ensureSession's initial
+	// shell window; that shell is a stray now, so drop it.
+	killStrayWindow(stray)
 	return nil
 }
 

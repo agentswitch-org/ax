@@ -340,6 +340,33 @@ func TestMuxPrefixLoad(t *testing.T) {
 	}
 }
 
+// MuxGroup is empty by default (grouping off) and must read through from user
+// config; before this it was silently dropped on load, so mux_group had no
+// effect for anyone who set it.
+func TestMuxGroupLoad(t *testing.T) {
+	t.Setenv("AX_CONFIG", filepath.Join(t.TempDir(), "missing.toml"))
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MuxGroup != "" {
+		t.Fatalf("default MuxGroup should be empty, got %q", cfg.MuxGroup)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(`mux_group = "project"`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AX_CONFIG", path)
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MuxGroup != "project" {
+		t.Fatalf("MuxGroup = %q, want project", cfg.MuxGroup)
+	}
+}
+
 func TestLoadExplicitBlankHarnessOverrideClearsBuiltin(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte(`

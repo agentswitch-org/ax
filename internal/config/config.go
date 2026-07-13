@@ -585,6 +585,7 @@ func Load() (Config, error) {
 	}
 	cfg.Mux = user.Mux                   // multiplexer backend selector, user-defined
 	cfg.MuxPrefix = user.MuxPrefix       // ax namespace prefix for mux window/session/tab names, user-defined
+	cfg.MuxGroup = user.MuxGroup         // per-key mux session grouping ("project"/label key), user-defined
 	cfg.HoldBackend = user.HoldBackend   // session-holder backend selector, user-defined
 	cfg.DetachPrefix = user.DetachPrefix // attach-client detach chord prefix rebind, user-defined
 	cfg.DetachKey = user.DetachKey       // attach-client detach chord letter rebind, user-defined

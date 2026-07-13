@@ -277,6 +277,64 @@ func TestTmuxGroupedFocusPinsDisplayMessageClientWithSamePaneClients(t *testing.
 	}
 }
 
+// A freshly created grouped session carries an initial default-shell window
+// (new-session -d). Open must capture its id (via -P -F #{window_id}) and kill
+// it once the real ax window is placed, so the grouped session shows no stray
+// empty shell.
+func TestTmuxGroupedNewSessionKillsStrayWindow(t *testing.T) {
+	installFakeTmux(t)
+	t.Setenv("AX_CONFIG", filepath.Join(t.TempDir(), "absent.toml"))
+	// HAS_SESSION unset -> the session does not exist, so new-session runs.
+	log := filepath.Join(t.TempDir(), "tmux.log")
+	t.Setenv("TMUX_FAKE_LOG", log)
+
+	if err := (tmux{}).Open("", "title", "claude --resume x", "sid", "group", false); err != nil {
+		t.Fatalf("tmux.Open grouped = %v", err)
+	}
+	calls := readFile(t, log)
+	if !strings.Contains(calls, "new-session -d -s ax_group -P -F #{window_id}\n") {
+		t.Fatalf("tmux calls = %q, want new-session to print the initial window id", calls)
+	}
+	if !strings.Contains(calls, "kill-window -t @88\n") {
+		t.Fatalf("tmux calls = %q, want the stray initial window @88 killed", calls)
+	}
+	// The stray is killed only after the real window is opened (never before, or
+	// killing the session's last window would destroy the session).
+	if strings.Index(calls, "new-window") > strings.Index(calls, "kill-window -t @88") {
+		t.Fatalf("tmux calls = %q, kill-window must come after new-window", calls)
+	}
+}
+
+// When the grouped session already exists, ensureSession creates nothing, so
+// there is no stray window and Open must not kill anything.
+func TestTmuxGroupedExistingSessionNoStrayKill(t *testing.T) {
+	installFakeTmux(t)
+	t.Setenv("AX_CONFIG", filepath.Join(t.TempDir(), "absent.toml"))
+	t.Setenv("TMUX_FAKE_HAS_SESSION", "1")
+	log := filepath.Join(t.TempDir(), "tmux.log")
+	t.Setenv("TMUX_FAKE_LOG", log)
+
+	if err := (tmux{}).Open("", "title", "claude --resume x", "sid", "group", false); err != nil {
+		t.Fatalf("tmux.Open grouped = %v", err)
+	}
+	calls := readFile(t, log)
+	if strings.Contains(calls, "new-session") {
+		t.Fatalf("tmux calls = %q, existing session must not be recreated", calls)
+	}
+	if strings.Contains(calls, "kill-window") {
+		t.Fatalf("tmux calls = %q, must not kill any window when no session was created", calls)
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 func installFakeTmux(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -300,6 +358,10 @@ new-session)
 		echo "new-session stderr detail" >&2
 		exit 42
 	fi
+	echo "@88"
+	exit 0
+	;;
+kill-window)
 	exit 0
 	;;
 new-window)
