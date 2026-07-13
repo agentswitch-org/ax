@@ -129,6 +129,53 @@ Rules regardless of mode:
 The invariant is: block on the next event across everything in flight, do not
 serialize on one worker while others need you, and never poll.
 
+## Never stall (supervision liveness)
+
+This is the one invariant that outranks everything else in Part 1. Treat it as a
+hard rule, not advice.
+
+**While any worker or child is live, never end a turn without an outstanding
+supervision wait.** Your loop is a chain of separate turns bridged by that one
+background wait. A claude session is re-invoked only by a human message or by a
+background command it launched completing, so the pending wait is the only thing
+keeping the loop alive. Drop it once while work is in flight and the loop is
+dead: silent, no watchdog, no recovery, until a human pokes you.
+
+- A background-wait-completed notification (a `<task-notification>`, "background
+  command finished") is ALWAYS "read the output, act, re-arm the next wait." It
+  is NEVER "no response needed" / "nothing to report" / end of turn. Even when
+  the worker's turn told you nothing new, you still process it and re-arm.
+- "Nothing new to tell the human" is not "end the turn." For a supervisor a
+  quiet worker turn still costs you one action: re-arm the wait. Collapsing the
+  two is exactly the bug that kills the loop.
+- Ending an idle turn is correct in exactly one case: no worker or child is
+  live, so you are genuinely waiting on the human. Then, and only then, ending
+  the turn (a human message wakes you) is right (see "Idle").
+
+### Heartbeat wait
+
+Make a dropped re-arm self-healing: always run the next-event command with a
+bounded timeout, never an unbounded block.
+
+```sh
+ax read --run "$AX_RUN" --follow --active --from-now --exclude-self --timeout 10m
+```
+
+The timeout is a watchdog, not a nuisance. If you ever fail to re-arm, the
+outstanding wait still fires on timeout within the interval, re-invokes you, and
+you see live unattended workers and re-arm. So the loop can never go silent for
+longer than one heartbeat while work is in flight. Keep the timeout at 10m or
+less. One standing heartbeat wait covers every worker in the run at once; you do
+not need one wait per worker.
+
+pi and codex coordinators get a second layer for free: they are launched with
+`--self-propel` (see Bootstrap), ax's native outer loop that re-invokes an idle
+session until the project is done, a human wait, or the idle cap, and never
+gives up while the session's own workers run. `--self-propel` is refused for
+claude (ax warns and ignores it, since claude sustains its own agent loop), so a
+claude coordinator's watchdog is the heartbeat wait above. Same invariant either
+way: no live workers without an outstanding wait covering them.
+
 ## First turn, and after any restart
 
 1. Read your task (your first message). It is the current goal.
@@ -514,7 +561,9 @@ header lines are cosmetic display metadata).
 
 The reference recipes are `recipes/coding-project-coordinator/coordinator.sh`
 (bash) and `recipes/coding-project-coordinator/coordinator.ps1` (pwsh) in the
-ax repo. They assume this behavior file is at
+ax repo. Both add `--self-propel` when `$AX_HARNESS` is pi or codex (the native
+watchdog for a one-burst-per-turn harness) and omit it for claude, which refuses
+it. They assume this behavior file is at
 `~/.config/ax/behaviors/coordinator.md` (the behaviors_dir content sync
 mirrors it across the fleet; behaviors are pure text and fully portable).
 Recipe scripts are shell-specific: `recipes_dir` lists direct files only, so
