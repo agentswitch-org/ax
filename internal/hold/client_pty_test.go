@@ -271,6 +271,44 @@ func TestDetachDisablesReportingModes(t *testing.T) {
 	}
 }
 
+// The scroll-in-held-session fix, end to end on a real pty: when the held
+// harness enables mouse tracking, focus reporting and bracketed paste, those
+// enables must reach the real client terminal (so the scroll wheel and paste
+// work inside the harness), while win32-input-mode and the kitty keyboard
+// enable must still be scrubbed (they re-encode input and would break the detach
+// chord). The chord must still detach, and teardown must disable the mouse modes
+// it let through so nothing leaks to the shell.
+func TestAttachPassesMouseEnableAndScrubsKeyboard(t *testing.T) {
+	c := startPTYClient(t, "pty-mouse")
+
+	// The harness turns on mouse tracking (click + SGR), focus and paste (all
+	// should pass), plus a win32-input-mode enable and a kitty keyboard push
+	// (both must be scrubbed).
+	c.srv.Output([]byte("\x1b[?1000h\x1b[?1006h\x1b[?1004h\x1b[?2004h\x1b[?9001h\x1b[>1u"))
+
+	waitFor(t, "mouse/focus/paste enables to reach the client terminal", func() bool {
+		o := c.output()
+		return strings.Contains(o, "\x1b[?1000h") && strings.Contains(o, "\x1b[?1006h") &&
+			strings.Contains(o, "\x1b[?1004h") && strings.Contains(o, "\x1b[?2004h")
+	})
+	if strings.Contains(c.output(), "\x1b[?9001h") {
+		t.Fatalf("win32-input enable leaked to the terminal; output: %q", c.output())
+	}
+	if strings.Contains(c.output(), "\x1b[>1u") {
+		t.Fatalf("kitty keyboard enable leaked to the terminal; output: %q", c.output())
+	}
+
+	// The detach chord still works (keyboard protocols still scrubbed), and the
+	// teardown reset disables the mouse modes we let through.
+	c.master.Write([]byte("\x01d"))
+	if code := c.exitCode(t); code != 0 {
+		t.Fatalf("detach exit code = %d, want 0", code)
+	}
+	if !strings.Contains(c.output(), "\x1b[?1000l") || !strings.Contains(c.output(), "\x1b[?1006l") {
+		t.Fatalf("teardown did not disable mouse tracking; output: %q", c.output())
+	}
+}
+
 // A terminal resize delivers SIGWINCH while the attach client is blocked in
 // its stdin read loop. That interrupt must resize the holder and keep the
 // viewer attached, not detach and close the pane.

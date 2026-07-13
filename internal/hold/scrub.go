@@ -2,19 +2,31 @@ package hold
 
 import "bytes"
 
+// scrubbedModes are the DEC private-mode enables ax still strips from a held
+// harness's output before it reaches the real terminal. It is a strict subset of
+// reportingModes (client.go): only win32-input-mode (9001), which re-encodes
+// keyboard input as CSI ..._ records, so arming it on the outer terminal would
+// change what bytes Ctrl-A produces and kill the detach chord. The mouse-tracking
+// modes (1000/1002/1003/1006), focus reporting (1004) and bracketed paste (2004)
+// are deliberately NOT scrubbed: while attached the user is driving the harness,
+// so those reports should reach it (the mouse-tracking enables are what make the
+// scroll wheel work inside the harness). They arm the real terminal only until
+// detach/exit, when ReportingModeReset disables every mode in reportingModes (a
+// superset of this list), so none of them leak to the shell prompt.
+var scrubbedModes = []string{"9001"}
+
 // scrubEnableSeqs are the exact ENABLE sequences ax strips from harness output
-// before it reaches the real terminal: the modes ReportingModeReset disables on
-// teardown and the xterm modifyOtherKeys levels (CSI > 4;1m / 4;2m). None of
-// these may arm the outer terminal: reporting modes spray reports onto the shell
-// prompt, and a keyboard-protocol enable replayed into a terminal that honors it
-// changes what bytes Ctrl-A produces, which kills the detach chord. Only the
-// enables are stripped; the matching disables pass through, so the harness can
-// still turn a mode off if an enable slipped through. The kitty keyboard
-// protocol enables carry variable flags, so they are matched by matchKittyEnable
-// instead of this table.
+// before it reaches the real terminal: scrubbedModes plus the xterm
+// modifyOtherKeys levels (CSI > 4;1m / 4;2m). A keyboard-protocol enable
+// replayed into a terminal that honors it changes what bytes Ctrl-A produces,
+// which kills the detach chord, so those stay stripped even though mouse/focus/
+// paste now pass through. Only the enables are stripped; the matching disables
+// pass through, so the harness can still turn a mode off if an enable slipped
+// through. The kitty keyboard protocol enables carry variable flags, so they are
+// matched by matchKittyEnable instead of this table.
 var scrubEnableSeqs = func() [][]byte {
-	seqs := make([][]byte, 0, len(reportingModes)+2)
-	for _, c := range reportingModes {
+	seqs := make([][]byte, 0, len(scrubbedModes)+2)
+	for _, c := range scrubbedModes {
 		seqs = append(seqs, []byte("\x1b[?"+c+"h"))
 	}
 	seqs = append(seqs, []byte("\x1b[>4;1m"), []byte("\x1b[>4;2m"))

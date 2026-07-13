@@ -53,9 +53,11 @@ const clientWriteQueue = 64
 // reportingModes are the DEC/private mode numbers that must not survive ax:
 // mouse tracking (1000 click, 1002 button-drag, 1003 any-motion) and its SGR
 // encoding (1006), focus reporting (1004), bracketed paste (2004), and
-// Windows Terminal win32-input-mode (9001). Shared by ReportingModeReset
-// (disable them all on teardown) and the output scrubber (strip their enables
-// from replayed/direct output, scrub.go).
+// Windows Terminal win32-input-mode (9001). ReportingModeReset disables them all
+// on teardown. The output scrubber (scrub.go) strips only the win32-input enable
+// from this set (scrubbedModes); the rest pass through to the terminal while
+// attached so the harness gets scroll/focus/paste, and the teardown reset clears
+// them so nothing leaks to the shell.
 var reportingModes = []string{"1000", "1002", "1003", "1006", "1004", "2004", "9001"}
 
 // ReportingModeReset defensively disables the terminal modes the held harness
@@ -322,12 +324,15 @@ func Attach(id string, spawn func() error, openMenu func()) (int, error) {
 		}
 	}()
 
-	// Held output replays whatever the inner terminal rendered, and on Windows
-	// that includes conhost's own mode-enables (win32-input-mode 9001, focus
-	// reporting 1004, ...). Written raw they would arm those modes on the real
-	// terminal, which then feeds reports (ESC[I/ESC[O, mouse, ...) back as
-	// input. Scrub the enables out of both the backlog replay and the live
-	// stream; the scrubber carries partial sequences across frame boundaries.
+	// Held output replays whatever the inner terminal rendered, including its own
+	// mode-enables. Most pass through: while attached the user is driving the
+	// harness, so mouse tracking (the scroll wheel), focus reporting and bracketed
+	// paste should reach it, and ReportingModeReset clears them at detach/exit.
+	// The scrubber strips only what would break the terminal for ax itself:
+	// win32-input-mode (9001) and the keyboard-protocol enables, which re-encode
+	// input and would change what Ctrl-A produces (the detach chord). It carries
+	// partial sequences across frame boundaries, over both backlog replay and the
+	// live stream.
 	scrubber := &TerminalModeScrubber{}
 	hinted := false
 	for {

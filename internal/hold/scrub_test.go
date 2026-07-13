@@ -5,13 +5,15 @@ import (
 	"testing"
 )
 
-// The attach client scrubs DEC private mode ENABLE sequences from replayed
-// output so a held ConPTY's own mode-sets (win32-input-mode 9001, focus
-// reporting 1004, mouse, bracketed paste) cannot arm the real terminal.
-// Disables and every other escape must pass through untouched.
-func TestModeScrubberStripsEnablesKeepsRest(t *testing.T) {
+// The attach client scrubs only win32-input-mode (9001) and the keyboard-
+// protocol enables from replayed output: those re-encode input on the real
+// terminal and would break the detach chord. Mouse tracking, focus reporting and
+// bracketed paste now pass through, so the harness gets scroll/focus/paste while
+// attached (ReportingModeReset clears them at detach/exit). Disables and every
+// other escape must pass through untouched.
+func TestModeScrubberStripsWin32KeepsMouse(t *testing.T) {
 	in := []byte("\x1b[2J\x1b[Hhello \x1b[?1004h\x1b[31mred\x1b[0m \x1b[?9001hworld\x1b[?1000h\x1b[?2004h!")
-	want := []byte("\x1b[2J\x1b[Hhello \x1b[31mred\x1b[0m world!")
+	want := []byte("\x1b[2J\x1b[Hhello \x1b[?1004h\x1b[31mred\x1b[0m world\x1b[?1000h\x1b[?2004h!")
 	s := &modeScrubber{}
 	if got := s.scrub(in); !bytes.Equal(got, want) {
 		t.Errorf("scrub = %q, want %q", got, want)
@@ -75,18 +77,19 @@ func TestModeScrubberKittySplitAcrossChunks(t *testing.T) {
 func TestModeScrubberSplitAcrossChunks(t *testing.T) {
 	s := &modeScrubber{}
 	var out []byte
-	out = append(out, s.scrub([]byte("foo\x1b[?10"))...)
-	out = append(out, s.scrub([]byte("04hbar"))...)
+	out = append(out, s.scrub([]byte("foo\x1b[?90"))...)
+	out = append(out, s.scrub([]byte("01hbar"))...)
 	if want := []byte("foobar"); !bytes.Equal(out, want) {
 		t.Errorf("scrubbed chunks = %q, want %q", out, want)
 	}
 
-	// A held-back prefix that turns out to be a disable is emitted intact.
+	// A held-back prefix that turns out to be a mouse enable (no longer scrubbed)
+	// is emitted intact.
 	s = &modeScrubber{}
 	out = out[:0]
-	out = append(out, s.scrub([]byte("x\x1b[?1004"))...)
-	out = append(out, s.scrub([]byte("ly"))...)
-	if want := []byte("x\x1b[?1004ly"); !bytes.Equal(out, want) {
+	out = append(out, s.scrub([]byte("x\x1b[?1000"))...)
+	out = append(out, s.scrub([]byte("hy"))...)
+	if want := []byte("x\x1b[?1000hy"); !bytes.Equal(out, want) {
 		t.Errorf("scrubbed chunks = %q, want %q", out, want)
 	}
 }
@@ -97,6 +100,19 @@ func TestTerminalModeScrubberStripsSplitWin32InputEnable(t *testing.T) {
 	out = append(out, s.Scrub([]byte("a\x1b[?90"))...)
 	out = append(out, s.Scrub([]byte("01hb"))...)
 	if want := []byte("ab"); !bytes.Equal(out, want) {
+		t.Errorf("TerminalModeScrubber chunks = %q, want %q", out, want)
+	}
+}
+
+// The mouse-tracking enables reach the terminal through the full scrubber so
+// the scroll wheel works inside a held harness, even when a sequence is split
+// across frames. This is the fix for scroll-in-held-session.
+func TestTerminalModeScrubberPassesMouseEnable(t *testing.T) {
+	s := &TerminalModeScrubber{}
+	var out []byte
+	out = append(out, s.Scrub([]byte("a\x1b[?10"))...)
+	out = append(out, s.Scrub([]byte("00h\x1b[?1006hb"))...)
+	if want := []byte("a\x1b[?1000h\x1b[?1006hb"); !bytes.Equal(out, want) {
 		t.Errorf("TerminalModeScrubber chunks = %q, want %q", out, want)
 	}
 }
