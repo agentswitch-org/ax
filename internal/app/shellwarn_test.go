@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/agentswitch-org/ax/internal/axlog"
 	"github.com/agentswitch-org/ax/internal/config"
 )
 
@@ -45,39 +46,37 @@ func TestTransportArgvNoWarnShellSet(t *testing.T) {
 	}
 }
 
-// While the picker owns the alt-screen (bufferShellWarnings active), a
-// missing-shell warning must not reach stderr, where it would land inside the
-// rendered frame. It is buffered and flushed to stderr after the picker exits.
-func TestShellWarnBufferedDuringPicker(t *testing.T) {
-	h := config.Host{Name: "win-buffered", Transport: "ssh win01"}
-	flush := bufferShellWarnings()
+// While the picker owns the alt-screen (logShellWarnings active), a missing-shell
+// warning must not reach the terminal at all: not stderr (where it would corrupt
+// the live frame) and not on teardown (where it would land on the shell prompt).
+// It is routed to the ax log instead, so the information is retained.
+func TestShellWarnLoggedDuringPicker(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	h := config.Host{Name: "win-logged", Transport: "ssh win01"}
+	restore := logShellWarnings()
 	during := captureStderr(t, func() { transportArgv(h, "list", "--json") })
 	if during != "" {
 		t.Fatalf("warning must not reach stderr while the picker is up, got: %q", during)
 	}
-	after := captureStderr(t, flush)
-	if !strings.Contains(after, `"win-buffered"`) || !strings.Contains(after, "no shell set") {
-		t.Fatalf("expected the buffered warning on flush, got: %q", after)
+	// Teardown emits nothing to the terminal — not even a stray newline.
+	after := captureStderr(t, restore)
+	if after != "" {
+		t.Fatalf("picker teardown must write nothing to stderr, got: %q", after)
+	}
+	logged := string(axlog.Dump())
+	if !strings.Contains(logged, `"win-logged"`) || !strings.Contains(logged, "no shell set") {
+		t.Fatalf("expected the warning in the ax log, got: %q", logged)
 	}
 }
 
-// A flush with nothing buffered writes nothing.
-func TestShellWarnFlushEmpty(t *testing.T) {
-	flush := bufferShellWarnings()
-	out := captureStderr(t, flush)
-	if out != "" {
-		t.Fatalf("empty flush must write nothing, got: %q", out)
-	}
-}
-
-// After flush the sink is restored: a warning fired later (a straggling fan-out
-// goroutine, or any post-picker shell-out) goes straight to stderr.
-func TestShellWarnRestoredAfterFlush(t *testing.T) {
-	bufferShellWarnings()()
+// After restore the sink is put back: a warning fired later (a targeted
+// post-picker shell-out to a not-yet-warned host) goes straight to stderr.
+func TestShellWarnRestoredAfterPicker(t *testing.T) {
+	logShellWarnings()()
 	h := config.Host{Name: "win-restored", Transport: "ssh win01"}
 	stderr := captureStderr(t, func() { transportArgv(h, "list") })
 	if !strings.Contains(stderr, "no shell set") {
-		t.Fatalf("expected the warning on stderr after flush, got: %q", stderr)
+		t.Fatalf("expected the warning on stderr after restore, got: %q", stderr)
 	}
 }
 

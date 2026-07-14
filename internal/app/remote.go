@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agentswitch-org/ax/internal/axlog"
 	"github.com/agentswitch-org/ax/internal/config"
 	hostreg "github.com/agentswitch-org/ax/internal/hosts"
 )
@@ -23,35 +23,42 @@ var shellWarned sync.Map
 
 // shellWarnOut is where warnMissingShell writes; nil means os.Stderr, resolved
 // at write time. shellWarnMu guards it: the federated fan-out warns from per-host
-// goroutines while bufferShellWarnings swaps the sink on the picker goroutine.
+// goroutines while logShellWarnings swaps the sink on the picker goroutine.
 var (
 	shellWarnMu  sync.Mutex
 	shellWarnOut io.Writer
 )
 
-// bufferShellWarnings redirects missing-shell warnings into a buffer and
-// returns a flush that restores the previous sink and writes anything collected
-// to os.Stderr. The picker wraps its alt-screen lifetime in this: the federated
-// fan-out shells out to each host while the frame is live, and a warning
-// printed to stderr then lands inside the rendered frame and corrupts the
-// display. Buffering keeps the warning out of the frame without losing it (it
-// flushes once the terminal is back on the normal screen). A fan-out goroutine
-// that warns after flush writes straight to stderr, which is safe for the same
-// reason.
-func bufferShellWarnings() (flush func()) {
-	var buf bytes.Buffer
+// shellWarnLog is an io.Writer that appends whatever warnMissingShell formats to
+// the ax log (read back with `ax log`) instead of the terminal.
+type shellWarnLog struct{}
+
+func (shellWarnLog) Write(p []byte) (int, error) {
+	axlog.Printf("%s", strings.TrimRight(string(p), "\n"))
+	return len(p), nil
+}
+
+// logShellWarnings redirects missing-shell warnings to the ax log for the
+// picker's lifetime and returns a restore that puts the previous sink back. The
+// picker's federated fan-out shells out to every configured host while the
+// alt-screen is live, so a no-shell host would warn on every picker open. Two
+// things are wrong with letting that reach the terminal: a warning printed to
+// stderr while the frame is up corrupts the rendered display, and one emitted on
+// teardown lands on the user's shell prompt after they quit (even on Ctrl+C).
+// The warning is aimed at operators running targeted remote commands, not at
+// someone just opening the picker, so here it is routed to the log and never to
+// the terminal. The direct targeted-command path (shellWarnOut nil) still warns
+// to stderr. Because warnMissingShell fires at most once per host, a fan-out
+// goroutine that straggles past restore has already been logged and stays quiet.
+func logShellWarnings() (restore func()) {
 	shellWarnMu.Lock()
 	prev := shellWarnOut
-	shellWarnOut = &buf
+	shellWarnOut = shellWarnLog{}
 	shellWarnMu.Unlock()
 	return func() {
 		shellWarnMu.Lock()
 		shellWarnOut = prev
-		out := buf.Bytes()
 		shellWarnMu.Unlock()
-		if len(out) > 0 {
-			os.Stderr.Write(out)
-		}
 	}
 }
 
