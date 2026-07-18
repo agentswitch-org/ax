@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/agentswitch-org/ax/internal/config"
 	"github.com/agentswitch-org/ax/internal/models"
 	"github.com/agentswitch-org/ax/internal/session"
 )
@@ -110,15 +111,27 @@ func TestEffortColumnCell(t *testing.T) {
 	}
 }
 
-func TestEffortInDefaultOrder(t *testing.T) {
-	found := false
+// EFF is auto-inserted (WithEffortColumn) only when a session carries an
+// effort value; it must NOT sit in defaultOrder burning width for everyone.
+func TestEffortNotInDefaultOrder(t *testing.T) {
 	for _, k := range defaultOrder {
 		if k == "effort" {
-			found = true
-			break
+			t.Fatalf("effort column must be auto-inserted, not in defaultOrder: %v", defaultOrder)
 		}
 	}
-	if !found {
-		t.Errorf("effort column not present in defaultOrder: %v", defaultOrder)
+}
+
+func TestWithEffortColumnInsertsAfterModel(t *testing.T) {
+	cfg := WithEffortColumn(config.Config{})
+	prev := ""
+	for _, k := range cfg.Columns {
+		if k == "effort" {
+			if prev != "model" {
+				t.Fatalf("effort inserted after %q, want after model: %v", prev, cfg.Columns)
+			}
+			return
+		}
+		prev = k
 	}
+	t.Fatalf("effort column not inserted: %v", cfg.Columns)
 }

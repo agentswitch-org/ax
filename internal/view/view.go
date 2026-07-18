@@ -631,7 +631,12 @@ func activityRank(a string) int {
 	return 2
 }
 
-var defaultOrder = []string{"harness", "status", "lifecycle", "model", "effort", "age", "ctx", "cost", "tokens", "dir", "win", "title"}
+// lifecycle is deliberately NOT in the default layout: STATUS already renders
+// the attention/activity/terminal facts, and two overlapping state vocabularies
+// side by side ("needs you" next to "waiting-live") read as incoherence. The
+// LIFE column stays available via config columns = [..., "lifecycle", ...] and
+// the wire format still carries the canonical lifecycle word.
+var defaultOrder = []string{"harness", "status", "model", "age", "ctx", "cost", "tokens", "dir", "win", "title"}
 
 const defaultSortKey = "age"
 
@@ -743,6 +748,12 @@ func WithTagsColumn(cfg config.Config) config.Config {
 // guardrails, so an unsupervised agent is unmissable.
 func WithYoloColumn(cfg config.Config) config.Config {
 	return insertCols(cfg, []string{"status", "activity", "state", "harness"}, "yolo")
+}
+
+// WithEffortColumn inserts EFF only when a session actually carries a
+// reasoning-effort setting; an all-blank column is dead width for everyone else.
+func WithEffortColumn(cfg config.Config) config.Config {
+	return insertCols(cfg, []string{"model"}, "effort")
 }
 
 // layoutCache memoizes the resolved column layout per column list: Row runs for
@@ -1117,7 +1128,7 @@ func Navbar(mode string, m Metrics, scope string, state string, width int) strin
 	if w < 30 {
 		w = 30
 	}
-	left := " ax v" + build.Version + " "
+	left := " ax " + build.Display() + " "
 	badge := " " + mode + " "
 	tag := ""
 	if scope != "" {

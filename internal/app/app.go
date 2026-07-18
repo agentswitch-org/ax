@@ -1494,6 +1494,11 @@ func (a App) List(args []string) {
 	meta := finder.BuildMeta(sessions, locators, remoteState)
 	d := view.DefaultSortCol(cfg)
 	view.Sort(cfg, sessions, db, d, view.DefaultDescFor(cfg, d), meta)
+	// A human at a terminal gets the column header; piped output stays bare rows
+	// so scripts written against the old shape keep parsing.
+	if st, err := os.Stdout.Stat(); err == nil && st.Mode()&os.ModeCharDevice != 0 {
+		fmt.Println(view.StripANSI(view.Columns(cfg, -1, d, view.DefaultDescFor(cfg, d))))
+	}
 	for _, s := range sessions {
 		fmt.Println(view.StripANSI(view.Row(cfg, db, s, meta[session.Key(s)], 0)))
 	}
@@ -2192,7 +2197,8 @@ func fromWire(ws wire.Session, host string) session.Session {
 // agent. Shared by the initial open and the picker's live reindex, so a session
 // that first introduces one of these makes its column appear on the next scan.
 func composeCols(cfg config.Config, sessions []session.Session, hasRemote bool) config.Config {
-	cfg = view.WithLifecycleColumn(cfg)
+	// lifecycle is no longer force-inserted: STATUS carries the same facts and
+	// the doubled state vocabulary read as incoherence. Opt back in via columns.
 	if hasRemote {
 		cfg = view.WithHostColumn(cfg)
 	}
@@ -2202,10 +2208,24 @@ func composeCols(cfg config.Config, sessions []session.Session, hasRemote bool) 
 	if anyLabeled(sessions) {
 		cfg = view.WithTagsColumn(cfg)
 	}
-	if anyYolo() {
+	if anyEffort(sessions) {
+		cfg = view.WithEffortColumn(cfg)
+	}
+	if anyYolo(sessions) {
 		cfg = view.WithYoloColumn(cfg)
 	}
 	return cfg
+}
+
+// anyEffort reports whether any session carries a reasoning-effort setting, so
+// the EFF column only appears when it has something to say.
+func anyEffort(sessions []session.Session) bool {
+	for _, s := range sessions {
+		if s.Effort != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // anyLabeled reports whether any session carries labels, so the TAGS column only
@@ -2219,11 +2239,18 @@ func anyLabeled(sessions []session.Session) bool {
 	return false
 }
 
-// anyYolo reports whether any live session runs without guardrails, so the picker
-// surfaces the ⚠ column only when there is an unsandboxed agent to warn about.
-func anyYolo() bool {
-	for _, e := range live.Snapshot() {
-		if live.Running(e) && state.IsYolo(e.Cmd) {
+// anyYolo reports whether any live HUMAN-driven session runs without
+// guardrails, so the picker surfaces the ⚠ column only when there is an
+// unsandboxed agent worth warning about. Task-carrying workers are excluded:
+// ax injects their bypass flag itself, so they would all flag and the column
+// would be permanent noise (mirrors the RowMeta.Yolo display rule).
+func anyYolo(sessions []session.Session) bool {
+	snap := live.Snapshot()
+	for _, s := range sessions {
+		if s.Host != "" || s.Task != "" {
+			continue
+		}
+		if e, ok := snap[s.ID]; ok && live.Running(e) && state.IsYolo(e.Cmd) {
 			return true
 		}
 	}
