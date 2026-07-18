@@ -26,6 +26,11 @@ type uiPrefs struct {
 	// first launch after upgrade; never written anymore.
 	ActiveOnly bool `json:"activeOnly,omitempty"`
 
+	// LastOpen is the unix time of the previous picker open, the boundary the
+	// while-you-were-away marks (the ● gutter and the opening digest) diff
+	// against. Written on every open.
+	LastOpen int64 `json:"lastOpen,omitempty"`
+
 	// Columns is the saved column-management layout: every column in horizontal
 	// order with its visibility and width, written on the modal's OK. Empty means
 	// no saved layout, so the config (or built-in) defaults apply.

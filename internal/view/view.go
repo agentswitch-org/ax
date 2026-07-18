@@ -45,6 +45,9 @@ type RowMeta struct {
 	Failed       bool   // a headless run that errored (non-zero exit or a fatal output pattern)
 	FailReason   string // short reason captured for a failed run; "" until Failed
 	Detached     bool   // live but with no viewer window on this machine (a backgrounded worker)
+	// TerminalAt is when the task concluded (the done/failed marker's mtime),
+	// zero unless Done or Failed. Feeds the picker's while-you-were-away marks.
+	TerminalAt time.Time
 }
 
 // These re-export the canonical state values so view's renderers keep their

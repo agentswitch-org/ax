@@ -157,6 +157,10 @@ type picker struct {
 
 	awaitingBind bool // leader key pressed; the next key resolves against cfg.Binds
 
+	prevOpen  time.Time       // the previous picker open (from prefs), for while-you-were-away marks
+	openStamp int64           // this open's unix stamp, persisted so the NEXT open diffs against it
+	newKeys   map[string]bool // sessions that concluded or started needing you since prevOpen (the ● gutter)
+
 	notice                string                 // transient footer message (e.g. "detached 3 windows"); cleared on the next key
 	suppressEmptyFallback bool                   // one recompute after an explicit hide action should stay empty
 	archiveEdits          map[string]archiveEdit // confirmed archive flips that stale refresh snapshots must not undo
@@ -244,6 +248,10 @@ func (p *picker) run() (Choice, error) {
 	p.selfID = os.Getenv("AX_SESSION_ID")
 	p.km = keys.Build(keyOverrides(p.cfg))
 	prefs := loadPrefs()
+	if prefs.LastOpen > 0 {
+		p.prevOpen = time.Unix(prefs.LastOpen, 0)
+	}
+	p.openStamp = time.Now().Unix()
 	p.scope = prefs.scope()                     // remembered between popup invocations
 	p.archive = prefs.archive()                 // remembered between popup invocations
 	p.groupBy = prefs.groupBy()                 // remembered between popup invocations
@@ -521,7 +529,7 @@ func (p *picker) cycleGroupBy() {
 // column layout is carried through verbatim so a scope/group-by toggle does not
 // drop it (only the column modal edits it).
 func (p *picker) saveCurrentPrefs() {
-	savePrefs(uiPrefs{Scope: int(p.scope), Archive: int(p.archive), GroupBy: p.groupBy, Collapsed: collapsedKeys(p.collapsed), Columns: p.colPrefs})
+	savePrefs(uiPrefs{Scope: int(p.scope), Archive: int(p.archive), GroupBy: p.groupBy, Collapsed: collapsedKeys(p.collapsed), Columns: p.colPrefs, LastOpen: p.openStamp})
 }
 
 // collapsedKeys flattens a collapse set into a sorted slice for persistence.
@@ -839,6 +847,13 @@ func (p *picker) recomputeKeeping(ref rowRef) {
 	if p.mode == mNormal && p.groupBy != "" {
 		p.groupMatches() // the pivot composes over the (possibly filtered) set
 	}
+	// Attention outranks the sort in the plain browse view: rows waiting on a
+	// human float to the top so "needs you" can never hide below the fold. A
+	// fuzzy/content ranking (open or committed) and the grouped/tree views keep
+	// their own order (groups already surface waiting members when collapsed).
+	if p.mode == mNormal && kind == mNormal && p.groupBy == "" && !p.treeMode {
+		p.matches = p.pinAttention(p.matches)
+	}
 	if p.visualKey != "" {
 		// Re-anchor the visual selection to its session: the list re-sorts and
 		// refreshes underneath an active selection, and an index anchor would
@@ -854,6 +869,34 @@ func (p *picker) recomputeKeeping(ref rowRef) {
 		p.clampCursor()
 	}
 	p.fixScroll()
+}
+
+// pinAttention stable-partitions match rows so sessions waiting on a human
+// (needs you / needs auth / review ready) come first.
+func (p *picker) pinAttention(matches []int) []int {
+	var top []int
+	for _, i := range matches {
+		if i < 0 {
+			continue
+		}
+		switch p.meta[session.Key(p.all[i])].Waiting {
+		case "input", "auth", "done":
+			top = append(top, i)
+		}
+	}
+	if len(top) == 0 {
+		return matches
+	}
+	rest := make([]int, 0, len(matches)-len(top))
+	for _, i := range matches {
+		if i >= 0 {
+			if w := p.meta[session.Key(p.all[i])].Waiting; w == "input" || w == "auth" || w == "done" {
+				continue
+			}
+		}
+		rest = append(rest, i)
+	}
+	return append(top, rest...)
 }
 
 func (p *picker) fallbackWhenFiltersHideAll() []int {
@@ -1007,10 +1050,16 @@ func (p *picker) fuzzy(base []int, query string) []int {
 	return res
 }
 
+// filterAllKey is the filterKey sentinel for the all-columns filter.
+const filterAllKey = "*"
+
 // filterColumn is the active metadata filter target. It normally stays fixed to
 // the column selected when `i` opened the input, so moving the sort cursor after
 // committing a filter does not silently retarget it.
 func (p *picker) filterColumn() int {
+	if p.filterKey == filterAllKey {
+		return -1 // all columns
+	}
 	n := view.NumCols(p.cfg)
 	if n == 0 {
 		return 0
@@ -1027,6 +1076,9 @@ func (p *picker) filterColumn() int {
 }
 
 func (p *picker) filterColumnLabel() string {
+	if p.filterKey == filterAllKey {
+		return "all"
+	}
 	if lab := view.ColumnLabel(p.cfg, p.filterColumn()); lab != "" {
 		return lab
 	}
@@ -1045,7 +1097,24 @@ func (p *picker) columnFilterTextFor(i, col int) string {
 	if t, ok := p.rowText[key]; ok {
 		return t
 	}
-	t := view.ColumnFilterText(p.cfg, p.db, s, p.meta[session.Key(s)], col)
+	var t string
+	if col < 0 {
+		// The all-columns filter: every visible column's text plus the core
+		// identity fields, so a session matches by name, title, task, dir, tag,
+		// or id even when that column is hidden from the current layout.
+		n := view.NumCols(p.cfg)
+		parts := make([]string, 0, n+7)
+		for c := 0; c < n; c++ {
+			if v := view.ColumnFilterText(p.cfg, p.db, s, p.meta[session.Key(s)], c); v != "" {
+				parts = append(parts, v)
+			}
+		}
+		parts = append(parts, s.Name, s.Title, s.Task, view.TildePath(s.Dir), s.Dir,
+			strings.Join(s.Labels, " "), s.ID, s.Harness)
+		t = strings.Join(parts, " ")
+	} else {
+		t = view.ColumnFilterText(p.cfg, p.db, s, p.meta[session.Key(s)], col)
+	}
 	p.rowText[key] = t
 	return t
 }
@@ -1240,9 +1309,64 @@ func (p *picker) applyInitialLoad(v View) {
 	p.selCol = p.sortCol
 	p.sortDesc = view.DefaultDescFor(p.cfg, p.sortCol)
 
+	p.computeAway()
+	p.saveCurrentPrefs() // persist this open's stamp so the next open diffs against it
+
 	p.applySort()
 	p.recompute()
 	p.buildPreview()
+}
+
+// computeAway marks every session that reached done/failed or started needing
+// you since the previous picker open (the ● gutter dot), and posts the
+// while-you-were-away digest as the opening notice. Viewing a row's preview
+// clears its dot; the digest clears on the first keypress like any notice.
+func (p *picker) computeAway() {
+	if p.prevOpen.IsZero() {
+		return
+	}
+	p.newKeys = map[string]bool{}
+	var done, failed, needs int
+	for _, s := range p.all {
+		m := p.meta[session.Key(s)]
+		concluded := !m.TerminalAt.IsZero() && m.TerminalAt.After(p.prevOpen)
+		attention := (m.Waiting == "input" || m.Waiting == "auth" || m.Waiting == "done") && s.Last.After(p.prevOpen)
+		if !concluded && !attention {
+			continue
+		}
+		p.newKeys[session.Key(s)] = true
+		switch {
+		case attention:
+			needs++
+		case m.Failed:
+			failed++
+		default:
+			done++
+		}
+	}
+	if len(p.newKeys) == 0 {
+		return
+	}
+	var parts []string
+	if needs > 0 {
+		parts = append(parts, ansi("1;31", strconv.Itoa(needs)+" need"+singularS(needs)+" you"))
+	}
+	if failed > 0 {
+		parts = append(parts, ansi("1;31", strconv.Itoa(failed)+" failed"))
+	}
+	if done > 0 {
+		parts = append(parts, ansi("1;36", strconv.Itoa(done)+" finished"))
+	}
+	p.notice = ansi("1;33", "● ") + ansi("2", "while you were away: ") + strings.Join(parts, ansi("2", " · "))
+}
+
+// singularS is the verb suffix for the needs-you digest ("1 needs you",
+// "2 need you").
+func singularS(n int) string {
+	if n == 1 {
+		return "s"
+	}
+	return ""
 }
 
 // finish stamps the picker's final loaded config/hosts onto its choice before
@@ -1310,6 +1434,7 @@ func (p *picker) buildPreview() {
 		return
 	}
 	key := session.Key(s)
+	delete(p.newKeys, key) // previewing a row counts as having seen its change
 	if key != p.previewKey {
 		// A different session is now selected: start pinned to the newest turn and
 		// drop any manual scroll carried over from the previous row. A rebuild of
@@ -1689,6 +1814,9 @@ func (p *picker) rowLine(mi, w int) string {
 	if p.selfID != "" && s.ID == p.selfID {
 		mark = ansi("1;36", "•") // you are here: the session this popup was opened from
 	}
+	if p.newKeys[session.Key(s)] {
+		mark = ansi("1;33", "●") // changed while you were away; clears once previewed
+	}
 	if p.marks[session.Key(s)] || p.inVisual(mi) {
 		mark = ansi("1;35", "+")
 	}
@@ -1781,6 +1909,9 @@ func (p *picker) promptLine() string {
 // bottom hint row stays clean. Empty when nothing is filtered and no hosts exist.
 func (p *picker) statusSegment() string {
 	var segs []string
+	if n := p.attentionCount(); n > 0 {
+		segs = append(segs, ansi("1;31", "⚑ "+strconv.Itoa(n)+" need"+singularS(n)+" you"))
+	}
 	if p.loading {
 		segs = append(segs, ansi("1;33", loadSpinner[p.frame%len(loadSpinner)])+" "+ansi("2", "loading"))
 	}
@@ -1825,6 +1956,20 @@ func (p *picker) statusSegment() string {
 	return strings.Join(segs, "  ")
 }
 
+// attentionCount is how many sessions fleet-wide are waiting on a human
+// (needs you / needs auth / review ready), independent of scope and filters,
+// so the navbar flag never hides with the rows.
+func (p *picker) attentionCount() int {
+	n := 0
+	for _, s := range p.all {
+		switch p.meta[session.Key(s)].Waiting {
+		case "input", "auth", "done":
+			n++
+		}
+	}
+	return n
+}
+
 // hintLine builds the normal-mode key hint from the live keymap, so it always
 // shows the keys actually in effect.
 func (p *picker) hintLine() string {
@@ -1834,6 +1979,7 @@ func (p *picker) hintLine() string {
 		p.km.Key(keys.Down) + "/" + p.km.Key(keys.Up) + " move",
 		p.km.Key(keys.Filter) + " filter",
 		p.km.Key(keys.Search) + " search",
+		p.km.Key(keys.Jump) + " jump",
 		p.km.Key(keys.Visual) + " select",
 		p.km.Key(keys.Label) + " tag",
 		p.km.Key(keys.GroupBy) + " by",
@@ -2046,9 +2192,18 @@ func (p *picker) dispatch(a keys.Action) bool {
 	case keys.Reply:
 		p.replySel()
 	case keys.Filter:
+		p.enterAllFilter()
+	case keys.FilterColumn:
 		p.enter(mFilter)
 	case keys.Search:
 		p.enter(mContent)
+	case keys.Jump:
+		if sess, ok := p.jumpModal(); ok {
+			p.choice = Choice{Picked: []session.Session{sess}}
+			return true
+		}
+	case keys.Yank:
+		p.yankSel()
 	case keys.Mark:
 		p.toggleMark()
 	case keys.Visual:
@@ -2108,6 +2263,15 @@ func (p *picker) enter(mode int) {
 	}
 	p.recompute()
 	p.previewDirty = true
+}
+
+// enterAllFilter opens the metadata filter across EVERY column (the default
+// `i`): name, title, task, tags, dir, and the rest match without first having
+// to select the right column with H/L. `I` keeps the column-scoped filter.
+func (p *picker) enterAllFilter() {
+	p.enter(mFilter)
+	p.filterCol = -1
+	p.filterKey = filterAllKey
 }
 
 func (p *picker) move(d int) {
@@ -3181,6 +3345,7 @@ func BuildMeta(sessions []session.Session, locators map[string]string, remoteSta
 			Done:       r.Done,
 			Failed:     r.Failed,
 			FailReason: s.FailReason,
+			TerminalAt: r.TerminalAt,
 		}
 		if m.Locator != "" && m.State != view.StateLive {
 			// An open window outranks the heartbeat: no beat (hand-started window)

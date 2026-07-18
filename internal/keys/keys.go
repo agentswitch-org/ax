@@ -30,6 +30,9 @@ const (
 	ColNext         Action = "col_next"
 	Sort            Action = "sort"
 	ColExpand       Action = "col_expand"
+	FilterColumn    Action = "filter_col"
+	Jump            Action = "jump"
+	Yank            Action = "yank"
 	Scope           Action = "scope"
 	Archive         Action = "archive"
 	ToggleArchived  Action = "toggle_archived"
@@ -103,7 +106,10 @@ var Defs = []Def{
 	{CollapseAll, "view", "collapse every group", []string{"-"}},
 	{ExpandAll, "view", "expand every group", []string{"=", "+"}},
 	{Reply, "session", "reply to a session that is waiting for input", []string{"r"}},
-	{Filter, "search", "filter the selected column as you type", []string{"i", "a"}},
+	{Filter, "search", "filter across every column as you type", []string{"i", "a"}},
+	{FilterColumn, "search", "filter only the selected column as you type", []string{"I"}},
+	{Jump, "search", "jump: fuzzy-find any session, filters ignored; enter opens it", []string{"'"}},
+	{Yank, "session", "yank the session id to the clipboard", []string{"y"}},
 	{Search, "search", "search the transcript text", []string{"/"}},
 	{Mark, "session", "mark or unmark the selected session", []string{"tab"}},
 	{Visual, "session", "visual select: j and k extend, v marks the range", []string{"v"}},
