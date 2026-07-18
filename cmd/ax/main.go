@@ -1102,6 +1102,7 @@ func usage() {
      [--write GLOB]... [--no-write] [--no-subagents] [--fence best-effort]
      [--accept ./check.sh] [--wait] [--unattended] [--interactive] [--attach] [--headless] [--json] [--dir D] [-- FLAGS]
      [--close-on-done] [--clean-env] [--env KEY=VAL] [--auth subscription|api|env:VAR] [--api]
+     [--sandbox | --no-sandbox]
      [--keep-live] [--keep-live-for D]
 	     [--self-propel [--propel-prompt P] [--propel-until CMD] [--max-idle-turns N]
 	      [--propel-backoff D] [--propel-watch PATH]]
@@ -1125,6 +1126,13 @@ func usage() {
 	                         watched worker concludes into a "done" state (alerts via notify)
 	                         when its task finishes and is reaped after retention.reap_after;
 	                         --keep-live opts out, --close-on-done ends the session immediately.
+                         --sandbox wraps the launch in nono (nolabs-ai/nono), so the
+                         agent runs under a kernel-enforced least-privilege profile
+                         (read/write in its workspace and nothing else). Requires nono
+                         on PATH; profile from the harness's sandbox_profile, the
+                         [sandbox] table, or nolabs-ai/<format>. [sandbox]
+                         backend = "nono" sandboxes every task launch by default;
+                         --no-sandbox opts a launch out.
                          --clean-env starts the child from a minimal environment; --env
                          sets a variable for it; --auth picks the auth source (default
                          subscription; env:VAR forces a specific key without exposing it).

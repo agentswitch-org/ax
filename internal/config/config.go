@@ -62,6 +62,9 @@ type Harness struct {
 	// that went idle apart because it is blocked on a sub-prompt (permission y/n,
 	// an OAuth login) rather than done. Feeds the `waiting` follow event.
 	WaitingRe string `toml:"waiting_re"`
+	// SandboxProfile is the nono profile a sandboxed launch of this harness
+	// wraps with (see [sandbox]); empty derives "nolabs-ai/<format>".
+	SandboxProfile string `toml:"sandbox_profile"`
 	// SkipPermissions is the harness's own flag (or flags) for making a watched
 	// interactive launch non-blocking on tool-permission prompts, e.g.
 	// "--dangerously-skip-permissions" for claude. Empty means the harness needs
@@ -85,6 +88,7 @@ type harnessOverride struct {
 	Args                *string `toml:"args"`
 	WaitingRe           *string `toml:"waiting_re"`
 	SkipPermissions     *string `toml:"skip_permissions"`
+	SandboxProfile      *string `toml:"sandbox_profile"`
 }
 
 func (h harnessOverride) toHarness() Harness {
@@ -108,6 +112,7 @@ func applyHarnessOverride(base Harness, over harnessOverride) Harness {
 		{&base.Args, over.Args},
 		{&base.WaitingRe, over.WaitingRe},
 		{&base.SkipPermissions, over.SkipPermissions},
+		{&base.SandboxProfile, over.SandboxProfile},
 	} {
 		if f.src != nil {
 			*f.dst = *f.src
@@ -200,6 +205,12 @@ type Config struct {
 	// Fence tunes the read-only capability fence (see internal/fence). Optional;
 	// the zero value is the built-in allowlist with fail-closed behavior.
 	Fence Fence `toml:"fence"`
+	// Sandbox configures the OS-level sandbox wrapper for control-layer
+	// launches (`ax <harness> "TASK"`). backend = "nono" wraps every task
+	// launch in `nono run --profile <profile> -- ...` so the agent gets
+	// kernel-enforced least privilege; "" / "off" launch unwrapped (today's
+	// behavior). --sandbox / --no-sandbox override per launch.
+	Sandbox Sandbox `toml:"sandbox"`
 	// Mux selects the terminal multiplexer backend session windows live in:
 	// "tmux", "zellij", "process", or "none". Empty means the platform default
 	// (tmux on Unix, process on Windows). zellij is weaker at per-pane queries than
@@ -268,6 +279,15 @@ type Config struct {
 	// network. ax degrades gracefully to bundled or previously cached model data.
 	// Also honored via AX_OFFLINE=1 (any non-empty value) in the environment.
 	Offline bool `toml:"offline"`
+}
+
+// Sandbox is the OS-sandbox wrapper configuration (see Config.Sandbox).
+type Sandbox struct {
+	// Backend selects the wrapper: "nono" or "off" ("" = off).
+	Backend string `toml:"backend"`
+	// Profile is the default sandbox profile for every harness; empty derives
+	// "nolabs-ai/<format>" per harness. A harness's sandbox_profile wins.
+	Profile string `toml:"profile"`
 }
 
 // Retention controls lifecycle cleanup. "Archive" hides sessions from default

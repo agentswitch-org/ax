@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,10 +94,13 @@ type launchOpts struct {
 	// OAuth only), "api" (pass the ambient key through), or "env:VARNAME" (set the
 	// key from a named variable, so a specific key is forced without exposing it).
 	// Empty defaults to subscription unless --api set it to "api".
-	auth   string
-	effort string   // reasoning effort level (low, medium, high, xhigh, max, ...)
-	host   string   // --host NAME: rerun this launch on the named host, id host-qualified
-	hflags []string // after `--`
+	auth string
+	// sandbox is the OS-sandbox intent: "on" (--sandbox), "off" (--no-sandbox),
+	// or "" (the [sandbox] config decides). Resolved at the sandbox choke point.
+	sandbox string
+	effort  string   // reasoning effort level (low, medium, high, xhigh, max, ...)
+	host    string   // --host NAME: rerun this launch on the named host, id host-qualified
+	hflags  []string // after `--`
 	// self-propel: the outer loop that re-invokes an idle inline (pi/codex)
 	// coordinator until the project is done, waiting on a human, or capped. Opt-in
 	// via --self-propel; meaningless (and refused) for a harness that sustains its
@@ -274,6 +278,11 @@ func remoteLaunchArgv(harness string, o launchOpts, headless bool) []string {
 	}
 	if o.cleanEnv {
 		args = append(args, "--clean-env")
+	}
+	if o.sandbox == "on" {
+		args = append(args, "--sandbox")
+	} else if o.sandbox == "off" {
+		args = append(args, "--no-sandbox")
 	}
 	for _, kv := range o.envSet {
 		args = append(args, "--env", kv)
@@ -515,6 +524,14 @@ func (a App) runLaunch(harness string, o launchOpts, ctx launchCtx) {
 	// or config) and explicit --env overrides. Expressed as a single env/shell prefix
 	// so it takes effect uniformly on every launch path (watched, --wait, detached).
 	cmd = applyEnvPolicy(cmd, o, h.Format, env)
+	// Sandbox choke point: after the env prefix (the auth strip must reach the
+	// harness inside the sandbox), before the run wrapper (the pty, heartbeat,
+	// and holder stay OUTSIDE it so attach/send/detach behave identically).
+	cmd, serr := sandboxCmd(cfg, h, o, cmd)
+	if serr != nil {
+		fmt.Fprintln(os.Stderr, "ax:", serr)
+		os.Exit(3)
+	}
 	// A watched interactive session also hits Claude Code's workspace folder-trust
 	// dialog (which the permission-bypass flag does NOT skip; only headless `-p`
 	// skips it). Pre-accept it for the launch dir so the worker does not hang. This
@@ -1118,6 +1135,48 @@ func envSetOp(kv string) shell.Op {
 	return shell.SetLiteral(kv, "")
 }
 
+// lookNono is the nono binary lookup, a seam so tests can fake its presence.
+var lookNono = func() (string, error) { return exec.LookPath("nono") }
+
+// sandboxCmd wraps a launch command in the OS sandbox when the launch (or the
+// [sandbox] config) asks for it: `nono run --profile <p> -- sh -c '<cmd>'`
+// (github.com/nolabs-ai/nono, kernel-enforced least privilege, no daemon).
+// Resolution: --no-sandbox always wins; --sandbox is a hard requirement (nono
+// missing is an error); backend = "nono" in config sandboxes when nono is on
+// PATH and degrades with a warning when it is not. The profile is the
+// harness's sandbox_profile, else [sandbox].profile, else "nolabs-ai/<format>".
+func sandboxCmd(cfg config.Config, h config.Harness, o launchOpts, cmd string) (string, error) {
+	mode := o.sandbox
+	if mode == "" && cfg.Sandbox.Backend == "nono" {
+		mode = "auto"
+	}
+	if mode == "" || mode == "off" {
+		return cmd, nil
+	}
+	if runtime.GOOS == "windows" {
+		if mode == "on" {
+			return "", fmt.Errorf("--sandbox: not supported on Windows (nono needs WSL2)")
+		}
+		return cmd, nil
+	}
+	nono, err := lookNono()
+	if err != nil {
+		if mode == "on" {
+			return "", fmt.Errorf("--sandbox: nono not found on PATH; install it from https://github.com/nolabs-ai/nono")
+		}
+		fmt.Fprintln(os.Stderr, "ax: warning: [sandbox] backend = \"nono\" but nono is not on PATH; launching UNSANDBOXED")
+		return cmd, nil
+	}
+	profile := h.SandboxProfile
+	if profile == "" {
+		profile = cfg.Sandbox.Profile
+	}
+	if profile == "" {
+		profile = "nolabs-ai/" + h.Format
+	}
+	return shellQuote(nono) + " run --profile " + shellQuote(profile) + " -- sh -c " + shellQuote(cmd), nil
+}
+
 // keepLiveDeadline resolves the keep-live lease into an absolute deadline stored
 // on the meta sidecar: now+DUR for --keep-live-for, or the zero time for an
 // indefinite --keep-live (and for no keep-live at all). The wrapper and the reap
@@ -1143,7 +1202,7 @@ func specFromOpts(harness string, o launchOpts, group, parent, origin string) *m
 		Name: o.name, Dir: o.dir, Accept: o.accept, Labels: o.labels, HFlags: o.hflags,
 		Group: group, Parent: parent, Origin: origin,
 		Headless: o.headless, Wait: o.wait, Unattended: o.unattend, CloseOnDone: o.closeOnDone, KeepLive: o.keepLive, KeepLiveFor: o.keepLiveFor,
-		WriteGlobs: o.fen.writeGlobs, NoWrite: o.fen.noWrite, FenceMode: o.fenceMode,
+		WriteGlobs: o.fen.writeGlobs, NoWrite: o.fen.noWrite, FenceMode: o.fenceMode, Sandbox: o.sandbox,
 		CleanEnv: o.cleanEnv, Env: o.envSet, Auth: o.auth,
 		MaxCost: o.fen.maxCost, MaxTokens: o.fen.maxTokens,
 		MaxWorkers: o.fen.maxWorkers, MaxDepth: o.fen.maxDepth,
@@ -1174,6 +1233,7 @@ func optsFromSpec(sp *meta.Spec) launchOpts {
 	o.closeOnDone, o.keepLive, o.fenceMode = sp.CloseOnDone, sp.KeepLive, sp.FenceMode
 	o.keepLiveFor = sp.KeepLiveFor
 	o.fen.writeGlobs, o.fen.noWrite = sp.WriteGlobs, sp.NoWrite
+	o.sandbox = sp.Sandbox
 	o.cleanEnv, o.envSet, o.auth = sp.CleanEnv, sp.Env, sp.Auth
 	o.fen.maxCost, o.fen.maxTokens = sp.MaxCost, sp.MaxTokens
 	o.fen.maxWorkers, o.fen.maxDepth = sp.MaxWorkers, sp.MaxDepth
@@ -1638,6 +1698,12 @@ func parseLaunch(argv []string) (launchOpts, error) {
 			continue
 		case "--clean-env":
 			o.cleanEnv = true
+			continue
+		case "--sandbox":
+			o.sandbox = "on"
+			continue
+		case "--no-sandbox":
+			o.sandbox = "off"
 			continue
 		case "--env":
 			if !strings.Contains(v, "=") {

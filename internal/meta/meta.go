@@ -110,6 +110,9 @@ type Spec struct {
 	WriteGlobs  []string `json:"write_globs,omitempty"`
 	NoWrite     bool     `json:"no_write,omitempty"`
 	FenceMode   string   `json:"fence_mode,omitempty"`
+	// Sandbox is the OS-sandbox intent as launched: "on" (--sandbox), "off"
+	// (--no-sandbox), or "" (config decides). See the launch sandbox choke point.
+	Sandbox string `json:"sandbox,omitempty"`
 
 	// Environment and auth policy (see internal/app env choke point).
 	CleanEnv bool     `json:"clean_env,omitempty"`
