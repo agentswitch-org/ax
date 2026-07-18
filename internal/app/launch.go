@@ -183,16 +183,27 @@ func (a App) remoteLaunch(harness string, o launchOpts) {
 		os.Exit(1)
 	}
 	a.printLaunched(o.host+"/"+id, group, o.jsonOut)
+	// --wait on a --host launch blocks caller-side on the remote session, so the
+	// flag keeps its job semantics instead of being silently dropped.
+	if o.wait {
+		waitArgs := []string{o.host + "/" + id}
+		if o.fen.timeout > 0 {
+			waitArgs = append(waitArgs, "--timeout", o.fen.timeout.String())
+		}
+		a.Wait(waitArgs) // exits with the wait code
+	}
 }
 
 // remoteLaunchArgv builds the ax argv that reruns this launch on a host: the
 // harness verb, --task-file - (the task streams over the transport's stdin, so a
 // multi-line or special-char prompt never reaches the remote shell parser),
 // --json (so the remote prints a machine-parseable {id,group} the caller
-// captures), and the forwarded run/label/model/behavior/effort/fence/api/dir
-// flags. --host is dropped (we are already on the host) and --headless is added
-// when the host forces headless (its interactive launcher is unwired). Pure so a
-// test can assert on the argv without executing anything.
+// captures), and the forwarded run/label/model/behavior/effort/fence/auth/env/
+// name/accept/lifecycle/dir flags. --host is dropped (we are already on the
+// host), --wait stays caller-side (remoteLaunch blocks on the remote id after
+// the launch returns), and --headless is added when the host forces headless
+// (its interactive launcher is unwired). Pure so a test can assert on the argv
+// without executing anything.
 func remoteLaunchArgv(harness string, o launchOpts, headless bool) []string {
 	args := []string{harness, "--task-file", "-", "--json"}
 	if headless {
@@ -240,8 +251,32 @@ func remoteLaunchArgv(harness string, o launchOpts, headless bool) []string {
 	if o.fen.maxDepth > 0 {
 		args = append(args, "--max-depth", strconv.Itoa(o.fen.maxDepth))
 	}
+	if o.fen.timeout > 0 {
+		args = append(args, "--timeout", o.fen.timeout.String())
+	}
 	if o.api {
 		args = append(args, "--api")
+	}
+	if o.auth != "" {
+		args = append(args, "--auth", o.auth)
+	}
+	if o.name != "" {
+		args = append(args, "--name", o.name)
+	}
+	if o.accept != "" {
+		args = append(args, "--accept", o.accept)
+	}
+	if o.unattend {
+		args = append(args, "--unattended")
+	}
+	if o.closeOnDone {
+		args = append(args, "--close-on-done")
+	}
+	if o.cleanEnv {
+		args = append(args, "--clean-env")
+	}
+	for _, kv := range o.envSet {
+		args = append(args, "--env", kv)
 	}
 	if o.keepLiveFor != "" {
 		args = append(args, "--keep-live-for", o.keepLiveFor)
@@ -1551,16 +1586,39 @@ func parseLaunch(argv []string) (launchOpts, error) {
 			o.dir = v
 		case "--accept":
 			o.accept = v
+		// The budget fences hard-fail on an unparseable value: swallowing the
+		// error here used to launch with the fence silently OFF, the exact
+		// opposite of what the caller asked for.
 		case "--max-cost":
-			o.fen.maxCost, _ = strconv.ParseFloat(v, 64)
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil || f < 0 {
+				return o, fmt.Errorf("--max-cost: invalid amount %q", v)
+			}
+			o.fen.maxCost = f
 		case "--max-tokens":
-			o.fen.maxTokens, _ = strconv.ParseFloat(v, 64)
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil || f < 0 {
+				return o, fmt.Errorf("--max-tokens: invalid count %q", v)
+			}
+			o.fen.maxTokens = f
 		case "--max-workers":
-			o.fen.maxWorkers, _ = strconv.Atoi(v)
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return o, fmt.Errorf("--max-workers: invalid count %q", v)
+			}
+			o.fen.maxWorkers = n
 		case "--max-depth":
-			o.fen.maxDepth, _ = strconv.Atoi(v)
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				return o, fmt.Errorf("--max-depth: invalid depth %q", v)
+			}
+			o.fen.maxDepth = n
 		case "--timeout":
-			o.fen.timeout, _ = time.ParseDuration(v)
+			d, err := time.ParseDuration(v)
+			if err != nil || d <= 0 {
+				return o, fmt.Errorf("--timeout: invalid duration %q", v)
+			}
+			o.fen.timeout = d
 		case "--wait":
 			o.wait = true
 			continue
