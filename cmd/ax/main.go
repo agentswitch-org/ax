@@ -73,6 +73,10 @@ func main() {
 		// `ax "some task"` becomes `ax <default_harness> "some task"`.
 		a.Launch(name, args)
 	case actionUnknown:
+		if v := nearVerb(name); v != "" {
+			fmt.Fprintf(os.Stderr, "ax: unknown command %q; did you mean %q?\n", name, v)
+			os.Exit(2)
+		}
 		fmt.Fprintf(os.Stderr, "ax: unknown command %q; set default_harness in config to run a prompt directly, or use ax <harness> \"<prompt>\"\n", name)
 		usage()
 		os.Exit(2)
@@ -154,7 +158,7 @@ func main() {
 		case "models":
 			app.UpdateModels(cfg, args)
 		case "version", "--version":
-			v := "ax " + build.Version
+			v := "ax " + build.Display()
 			if build.Commit != "" || build.Date != "" {
 				detail := build.Commit
 				if build.Date != "" {
@@ -250,9 +254,66 @@ func classifyCmd(args []string, cfg config.Config) (action dispatchAction, name 
 		return actionExtension, cmd, rest
 	}
 	if cfg.DefaultHarness != "" {
+		// A lone bare word one edit away from a real verb is far more likely a
+		// typo ("ax lst", "ax kil abc") than a one-word prompt; launching a
+		// session on it would silently burn a run on garbage. Refuse with the
+		// suggestion; a quoted or multi-word prompt never trips this.
+		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
+			if v := nearVerb(cmd); v != "" {
+				return actionUnknown, cmd, rest
+			}
+		}
 		return actionDefault, cfg.DefaultHarness, append([]string{cmd}, rest...)
 	}
 	return actionUnknown, cmd, rest
+}
+
+// nearVerb returns the built-in verb within edit distance 1 of cmd, or "".
+func nearVerb(cmd string) string {
+	if len(cmd) < 3 {
+		return "" // too short to judge; "ax go" stays a prompt
+	}
+	for _, v := range []string{
+		"pick", "new", "list", "attach", "preview", "search", "kill",
+		"archive", "unarchive", "prune", "tag", "read", "result", "wait", "send", "ask", "reply", "move",
+		"restart", "continue", "runs", "metrics", "host", "config", "hook",
+		"check", "log", "models", "version", "help",
+	} {
+		if editDistanceAtMost1(cmd, v) {
+			return v
+		}
+	}
+	return ""
+}
+
+// editDistanceAtMost1 reports whether a and b are within one insertion,
+// deletion, or substitution of each other (and not equal; equal never reaches
+// here because known verbs match first).
+func editDistanceAtMost1(a, b string) bool {
+	la, lb := len(a), len(b)
+	if la > lb {
+		a, b, la, lb = b, a, lb, la
+	}
+	if lb-la > 1 {
+		return false
+	}
+	i, j, diffs := 0, 0, 0
+	for i < la && j < lb {
+		if a[i] == b[j] {
+			i++
+			j++
+			continue
+		}
+		diffs++
+		if diffs > 1 {
+			return false
+		}
+		if la == lb {
+			i++ // substitution
+		}
+		j++ // insertion into the shorter string
+	}
+	return diffs+(lb-j)-(la-i) <= 1
 }
 
 // isKnownVerb reports whether cmd is a built-in ax verb (not a harness name).
