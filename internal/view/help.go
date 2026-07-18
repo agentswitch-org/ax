@@ -164,7 +164,7 @@ func Help(km keys.Map, detachKey string, rows, cols int) string {
 		for _, line := range bannerLines {
 			out(full(cBan(line), vis(line)))
 		}
-		sub := "agentswitch  ·  v" + build.Version
+		sub := "agentswitch  ·  " + build.Display()
 		out(full(cDim(sub), vis(sub)))
 		out(junction("╠", "╤", "╣"))
 	}
