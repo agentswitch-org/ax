@@ -871,6 +871,16 @@ func ColumnIndex(cfg config.Config, key string) int {
 	return -1
 }
 
+// ColumnNaturalWidth is the display width of a session's cell in a layout
+// column when rendered unclipped, for the picker's snap-to-content toggle.
+func ColumnNaturalWidth(cfg config.Config, db models.DB, s session.Session, m RowMeta, col int) int {
+	cols := layout(cfg)
+	if col < 0 || col >= len(cols) {
+		return 0
+	}
+	return dispWidth(cols[col].cell(s, db, m, 4096, 0))
+}
+
 // ColumnLabel is the display label of a visible layout column.
 func ColumnLabel(cfg config.Config, col int) string {
 	cols := layout(cfg)

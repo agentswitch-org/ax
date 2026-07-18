@@ -29,6 +29,7 @@ const (
 	ColPrev         Action = "col_prev"
 	ColNext         Action = "col_next"
 	Sort            Action = "sort"
+	ColExpand       Action = "col_expand"
 	Scope           Action = "scope"
 	Archive         Action = "archive"
 	ToggleArchived  Action = "toggle_archived"
@@ -90,6 +91,7 @@ var Defs = []Def{
 	{ColPrev, "sort", "select the column to the left", []string{"H"}},
 	{ColNext, "sort", "select the column to the right", []string{"L"}},
 	{Sort, "sort", "sort by the selected column, flip if already sorted", []string{"s"}},
+	{ColExpand, "sort", "snap the selected column to its full content width, toggle back", []string{"z"}},
 	{Scope, "view", "cycle scope: all, live, working, active run", []string{"t"}},
 	{Archive, "view", "cycle archive view: unarchived, all, archived", []string{"A"}},
 	{Machines, "view", "filter the list by machine", []string{"m"}},

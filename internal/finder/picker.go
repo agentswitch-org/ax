@@ -173,12 +173,13 @@ type picker struct {
 	top       int    // first visible match (scroll)
 	marks     map[string]bool
 
-	selCol   int
-	sortCol  int
-	sortDesc bool
-	scope    scopeMode // All / Live / Working, cycled by `t`
-	archive  retention.ArchiveFilter
-	colPrefs []colPref // saved column-modal layout (persisted); empty = config/built-in defaults
+	selCol       int
+	sortCol      int
+	sortDesc     bool
+	expandedCols map[string]bool // column keys snapped to content width (the z toggle)
+	scope        scopeMode       // All / Live / Working, cycled by `t`
+	archive      retention.ArchiveFilter
+	colPrefs     []colPref // saved column-modal layout (persisted); empty = config/built-in defaults
 
 	frame        int      // spinner frame
 	preview      []string // current preview lines
@@ -1148,6 +1149,7 @@ func (p *picker) applyReindex(rr reindexResult) {
 	p.cfg = rr.cfg
 	p.applySavedColLayout() // re-apply the saved column modal layout over the rescanned cfg
 	p.all = p.overlayArchiveSessions(rr.sessions)
+	p.applyExpandedCols() // re-overlay the z snap-to-content widths
 	if idx := view.ColumnIndex(p.cfg, sortKey); idx >= 0 {
 		p.sortCol = idx
 	} else if n := view.NumCols(p.cfg); n > 0 {
@@ -1212,6 +1214,7 @@ func (p *picker) applyInitialLoad(v View) {
 	p.applySavedColLayout() // re-apply the saved column modal layout over the loaded cfg
 	p.db = v.Models
 	p.all = v.Sessions
+	p.applyExpandedCols() // re-overlay the z snap-to-content widths
 	p.meta = v.Meta
 	if p.meta == nil {
 		p.meta = map[string]view.RowMeta{}
@@ -2009,6 +2012,8 @@ func (p *picker) dispatch(a keys.Action) bool {
 		p.selCol = (p.selCol + 1) % view.NumCols(p.cfg)
 	case keys.Sort:
 		p.sortBy(p.selCol)
+	case keys.ColExpand:
+		p.toggleColExpand()
 	case keys.Scope:
 		p.scope = (p.scope + 1) % scopeCount // All -> Live -> Working -> Active Run -> All
 		p.saveCurrentPrefs()                 // sticks across popup open/close
@@ -2133,6 +2138,60 @@ func (p *picker) clampCursor() {
 	}
 	if p.cursor < 0 {
 		p.cursor = 0
+	}
+}
+
+// toggleColExpand snaps the selected column to its full content width so a
+// truncated cell (a long dir, a clipped title, a tag pile) reads whole, and
+// snaps it back on the second press. The width override lives in ColWidths
+// like a column-modal resize, but is session-scoped (not persisted) and is
+// re-applied over every config swap so the live reindex cannot undo it.
+func (p *picker) toggleColExpand() {
+	key := view.ColumnKey(p.cfg, p.selCol)
+	if key == "" {
+		return
+	}
+	if p.expandedCols == nil {
+		p.expandedCols = map[string]bool{}
+	}
+	if p.expandedCols[key] {
+		delete(p.expandedCols, key)
+	} else {
+		p.expandedCols[key] = true
+	}
+	// Rebuild the base widths (prefs or registry defaults), then overlay what
+	// is still expanded, so un-snapping restores the exact prior width.
+	p.cfg.ColWidths = nil
+	p.applySavedColLayout()
+	p.applyExpandedCols()
+	p.previewDirty = true
+}
+
+// applyExpandedCols overlays the snap-to-content widths onto the current
+// layout. Called after every place the config (and so the layout) is swapped.
+func (p *picker) applyExpandedCols() {
+	if len(p.expandedCols) == 0 {
+		return
+	}
+	if p.cfg.ColWidths == nil {
+		p.cfg.ColWidths = map[string]int{}
+	}
+	for key := range p.expandedCols {
+		idx := view.ColumnIndex(p.cfg, key)
+		if idx < 0 {
+			continue
+		}
+		w := vwidth(view.ColumnLabel(p.cfg, idx)) + 1 // never narrower than its header
+		for _, s := range p.all {
+			if cw := view.ColumnNaturalWidth(p.cfg, p.db, s, p.meta[session.Key(s)], idx); cw > w {
+				w = cw
+			}
+		}
+		// One column must not eat the whole screen; the rest still have to render.
+		if p.sc != nil && p.sc.cols > 40 && w > p.sc.cols*2/3 {
+			w = p.sc.cols * 2 / 3
+		}
+		p.cfg.ColWidths[key] = w
 	}
 }
 
