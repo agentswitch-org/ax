@@ -1138,20 +1138,26 @@ func (p *picker) applyReindex(rr reindexResult) {
 		curKey = session.Key(s)
 		curSess = s
 	}
+	// The column layout can change across the swap (a first grouped/tagged/
+	// remote session inserts columns BEFORE the sort column), so the sort and
+	// selection anchor to their column KEYS, not their numeric indices: an
+	// insertion to the left used to shift the ▲/▼ arrow onto the neighboring
+	// column while the rows kept sorting by the old one.
+	sortKey := view.ColumnKey(p.cfg, p.sortCol)
+	selKey := view.ColumnKey(p.cfg, p.selCol)
 	p.cfg = rr.cfg
 	p.applySavedColLayout() // re-apply the saved column modal layout over the rescanned cfg
 	p.all = p.overlayArchiveSessions(rr.sessions)
-	// The column layout can change (a first grouped/tagged/remote session inserts
-	// columns): keep the sort/selected column in range so it still names a real
-	// column after the swap.
-	if n := view.NumCols(p.cfg); n > 0 {
-		if p.sortCol >= n {
-			p.sortCol = view.DefaultSortCol(p.cfg)
-			p.sortDesc = view.DefaultDescFor(p.cfg, p.sortCol)
-		}
-		if p.selCol >= n {
-			p.selCol = p.sortCol
-		}
+	if idx := view.ColumnIndex(p.cfg, sortKey); idx >= 0 {
+		p.sortCol = idx
+	} else if n := view.NumCols(p.cfg); n > 0 {
+		p.sortCol = view.DefaultSortCol(p.cfg)
+		p.sortDesc = view.DefaultDescFor(p.cfg, p.sortCol)
+	}
+	if idx := view.ColumnIndex(p.cfg, selKey); idx >= 0 {
+		p.selCol = idx
+	} else {
+		p.selCol = p.sortCol
 	}
 	p.rowText = map[string]string{} // row cells derive from the refreshed sessions
 	if curKey != "" {
@@ -3104,11 +3110,15 @@ func BuildMeta(sessions []session.Session, locators map[string]string, remoteSta
 			r = rs
 		}
 		m := view.RowMeta{
-			Locator:    locators[session.Key(s)],
-			State:      r.State,
-			Activity:   r.Activity,
-			DirGone:    s.Dir != "" && !r.DirExists,
-			Yolo:       r.Yolo,
+			Locator:  locators[session.Key(s)],
+			State:    r.State,
+			Activity: r.Activity,
+			DirGone:  s.Dir != "" && !r.DirExists,
+			// The ⚠ display flag is for a HUMAN-driven session running without
+			// guardrails. A task-carrying worker got its bypass flag from ax's own
+			// autonomy injection, so flagging it would mark every worker and the
+			// warning would mean nothing. The wire Runtime.Yolo stays truthful.
+			Yolo:       r.Yolo && s.Task == "",
 			Done:       r.Done,
 			Failed:     r.Failed,
 			FailReason: s.FailReason,
