@@ -34,19 +34,56 @@ curl -fsSL https://agentswitch.org/install.sh | sh
 
 ### Linux
 
-The standalone installer downloads the matching tarball from the latest GitHub
-release and installs `ax` to `~/.local/bin` unless `AX_INSTALL_DIR` is set:
+#### Debian, Ubuntu, and WSL
+
+Install the `.deb` directly from the latest GitHub release. This path works on
+Intel/AMD (`amd64`) and ARM (`arm64`) systems:
+
+```sh
+set -eu
+arch=$(dpkg --print-architecture)
+tag=$(curl -fsSL https://api.github.com/repos/agentswitch-org/ax/releases/latest |
+  sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+test -n "$tag"
+version=${tag#v}
+curl -fL \
+  "https://github.com/agentswitch-org/ax/releases/download/$tag/ax_${version}_linux_${arch}.deb" \
+  -o /tmp/ax.deb
+sudo apt install /tmp/ax.deb
+ax version
+```
+
+To install a package downloaded in the Windows browser:
+
+1. Run `dpkg --print-architecture` in WSL. The result is usually `amd64`; use
+   `arm64` on ARM-based Windows machines.
+2. Open the [latest ax release](https://github.com/agentswitch-org/ax/releases/latest)
+   in the Windows browser. Under **Assets**, download
+   `ax_<version>_linux_<arch>.deb` for the architecture from step 1.
+3. In WSL, run `explorer.exe .` and move the downloaded `.deb` into the folder
+   that opens.
+4. Install it:
+
+```sh
+sudo apt install ./ax_*_linux_*.deb
+ax version
+```
+
+#### Other Linux distributions
+
+The standalone installer downloads the matching tarball from the latest
+GitHub release and installs `ax` to `~/.local/bin` unless `AX_INSTALL_DIR` is
+set:
 
 ```sh
 curl -fsSL https://agentswitch.org/install.sh | sh
 ax version
 ```
 
-Debian, Ubuntu, Fedora, RHEL, Rocky, and AlmaLinux users can also install the
-`.deb` or `.rpm` attached to the latest GitHub release:
+Fedora, RHEL, Rocky, and AlmaLinux users can install the `.rpm` attached to the
+[latest release](https://github.com/agentswitch-org/ax/releases/latest):
 
 ```sh
-sudo apt install ./ax_<version>_linux_<arch>.deb
 sudo dnf install ./ax_<version>_linux_<arch>.rpm
 ```
 
