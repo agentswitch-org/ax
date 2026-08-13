@@ -1054,3 +1054,61 @@ func TestPretrustCodex(t *testing.T) {
 		t.Fatalf("trust block malformed:\n%s", got)
 	}
 }
+
+// --effort must reach the harness process, not just the metadata sidecar: a
+// harness with an effort_arg fragment gets it appended (quoted), one without
+// gets a warning instead of a silent drop.
+func TestEffortHargs(t *testing.T) {
+	h := config.Harness{Name: "codex", EffortArg: "-c model_reasoning_effort={effort}"}
+	got := effortHargs(h, "--flag", "xhigh")
+	if !strings.Contains(got, "model_reasoning_effort=") || !strings.Contains(got, "xhigh") {
+		t.Fatalf("effortHargs = %q, want the effort fragment appended", got)
+	}
+	if got := effortHargs(h, "--flag", ""); got != "--flag" {
+		t.Fatalf("effortHargs with no effort = %q, want args unchanged", got)
+	}
+	if got := effortHargs(config.Harness{Name: "claude"}, "--flag", "high"); got != "--flag" {
+		t.Fatalf("effortHargs without effort_arg = %q, want args unchanged (warn only)", got)
+	}
+}
+
+// --fence takes exactly best-effort or strict; anything else is a parse error,
+// not a silently-ignored mode.
+func TestParseLaunchFenceModes(t *testing.T) {
+	for _, mode := range []string{"best-effort", "strict"} {
+		o, err := parseLaunch([]string{"task", "--fence", mode})
+		if err != nil || o.fenceMode != mode {
+			t.Fatalf("parseLaunch --fence %s = (%q, %v)", mode, o.fenceMode, err)
+		}
+	}
+	if _, err := parseLaunch([]string{"task", "--fence", "yolo"}); err == nil {
+		t.Fatal("parseLaunch --fence yolo = nil error, want rejection")
+	}
+}
+
+// The default codex templates must forward the requested model and carry
+// resume-with-input forms, so `--model` reaches the child process and
+// `ax continue` has a real path for codex.
+func TestCodexDefaultsForwardModelAndResume(t *testing.T) {
+	for _, h := range config.Default().Harnesses {
+		if h.Name != "codex" {
+			continue
+		}
+		for name, tmpl := range map[string]string{
+			"launch": h.Launch, "launch_headless": h.LaunchHeadless,
+			"resume": h.Resume, "resume_input": h.ResumeInput, "resume_input_headless": h.ResumeInputHeadless,
+		} {
+			if !strings.Contains(tmpl, "--model {model}") {
+				t.Errorf("codex %s template lacks --model {model}: %q", name, tmpl)
+			}
+		}
+		if h.ResumeInput == "" || h.ResumeInputHeadless == "" {
+			t.Error("codex must have resume-with-input templates for ax continue")
+		}
+		if !strings.Contains(h.EffortArg, "{effort}") {
+			t.Errorf("codex effort_arg = %q, want an {effort} fragment", h.EffortArg)
+		}
+		return
+	}
+	t.Fatal("no codex harness in defaults")
+}

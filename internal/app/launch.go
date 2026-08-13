@@ -82,7 +82,7 @@ type launchOpts struct {
 	// it so the human lands inside that session instead of the recipe wrapper.
 	attach    bool
 	jsonOut   bool
-	fenceMode string // "best-effort" to launch an un-fenceable harness unfenced
+	fenceMode string // "best-effort" launches an un-fenceable harness unfenced; "strict" refuses even when config says best-effort
 	dir       string
 	// cleanEnv starts the child from a minimal environment (a small allowlist,
 	// the AX_* control vars, and the overrides below), so a worker never silently
@@ -457,6 +457,7 @@ func (a App) runLaunch(harness string, o launchOpts, ctx launchCtx) {
 		behavior = ""
 	}
 	hargs := strings.TrimSpace(h.Args + " " + strings.Join(o.hflags, " "))
+	hargs = effortHargs(h, hargs, o.effort)
 	// Make an autonomous launch non-blocking on tool permissions. A watched
 	// interactive session (the default now) would otherwise hang on per-tool
 	// permission prompts exactly the way headless already bypasses them; inject the
@@ -487,7 +488,12 @@ func (a App) runLaunch(harness string, o launchOpts, ctx launchCtx) {
 				}
 			}
 		}
-		bestEffort := o.fenceMode == "best-effort" || cfg.Fence.OnUnsupported == "best-effort"
+		// --fence strict pins the fail-closed default per launch, overriding a
+		// config-wide on_unsupported = "best-effort": a reviewer/auditor caller
+		// must be able to refuse an unfenced launch no matter what the box's
+		// config says.
+		bestEffort := o.fenceMode == "best-effort" ||
+			(o.fenceMode != "strict" && cfg.Fence.OnUnsupported == "best-effort")
 		out, refuse, warn := fenceHargs(h.Format, hargs, bestEffort, o.fen.writeGlobs, o.fen.noSubagents)
 		if refuse {
 			fmt.Fprintf(os.Stderr, "ax: refused: harness %q cannot enforce a write fence; omit --write/--no-write to launch writable, or --fence best-effort to launch unfenced anyway\n", harness)
@@ -980,6 +986,22 @@ func literalGlobDir(pattern string) string {
 		}
 	}
 	return filepath.Dir(pattern)
+}
+
+// effortHargs forwards --effort into the harness's args slot via its effort_arg
+// fragment ({effort} replaced with the quoted level). A harness with no
+// fragment cannot honor the level; warn on stderr instead of silently dropping
+// it — the session's recorded Effort would otherwise claim a setting the
+// process never saw, and cost/attribution downstream would be wrong.
+func effortHargs(h config.Harness, hargs, effort string) string {
+	if effort == "" {
+		return hargs
+	}
+	if h.EffortArg == "" {
+		fmt.Fprintf(os.Stderr, "ax: warning: harness %q has no effort_arg configured; --effort %s NOT forwarded to the process\n", h.Name, effort)
+		return hargs
+	}
+	return strings.TrimSpace(hargs + " " + strings.ReplaceAll(h.EffortArg, "{effort}", quoteVal(effort)))
 }
 
 // fenceHargs applies the write capability fence to a harness's args slot: it
@@ -1741,6 +1763,9 @@ func parseLaunch(argv []string) (launchOpts, error) {
 			o.fen.noSubagents = true
 			continue
 		case "--fence":
+			if v != "best-effort" && v != "strict" {
+				return o, fmt.Errorf("--fence: unknown mode %q (best-effort launches an un-fenceable harness unfenced with a warning; strict refuses it even when config says best-effort)", v)
+			}
 			o.fenceMode = v
 		case "--effort":
 			o.effort = v

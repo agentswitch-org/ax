@@ -1116,6 +1116,12 @@ func resolveIDFromSessions(id string, sessions []session.Session) string {
 	if m := prefixMatches(sessions, id); len(m) == 1 {
 		return m[0].ID
 	}
+	// A short prefix of a LAUNCH id: the placeholder session it would have
+	// prefix-matched is gone once the real session is adopted, so follow the
+	// alias files by prefix the same way.
+	if aliased, ok := meta.ResolveAliasPrefix(id); ok {
+		return aliased
+	}
 	return id
 }
 
@@ -1812,8 +1818,17 @@ func (a App) localReport(group string, arch retention.ArchiveFilter) wire.Report
 		Sessions:      make([]wire.Session, len(sessions)),
 		Capability:    capabilityReport(cfg),
 	}
+	// Stamp each adopted session with the id its launch printed, so a script
+	// that captured the launch JSON can join it against these rows (the two ids
+	// differ for a mint-its-own-id harness).
+	launchIDs := map[string]string{}
+	for from, to := range meta.Aliases() {
+		launchIDs[to] = from
+	}
 	for i, s := range sessions {
-		rep.Sessions[i] = toWire(s, rt[s.ID])
+		ws := toWire(s, rt[s.ID])
+		ws.LaunchID = launchIDs[s.ID]
+		rep.Sessions[i] = ws
 	}
 	return rep
 }

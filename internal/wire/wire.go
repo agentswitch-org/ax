@@ -148,4 +148,11 @@ type Session struct {
 	ReuseReady bool      `json:"reuse_ready,omitempty"`
 	TerminalAt time.Time `json:"terminal_at,omitempty,omitzero"`
 	IdleSince  time.Time `json:"idle_since,omitempty,omitzero"`
+
+	// LaunchID (additive, owner-computed) is the id the launch originally
+	// printed when it differs from ID: a mint-its-own-id harness (codex,
+	// opencode) is adopted under its real id after launch, and a script that
+	// captured `ax ... --json`'s id needs this to join the two. Both ids are
+	// working handles (the launch id forwards via its alias).
+	LaunchID string `json:"launch_id,omitempty"`
 }

@@ -6,6 +6,7 @@ package models
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -72,6 +73,15 @@ func Update() (int, error) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return 0, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("models.dev returned HTTP %d instead of the catalog", resp.StatusCode)
+	}
+	// A corporate proxy or captive portal answers with an HTML block page here;
+	// name that instead of leaking the JSON parser's "invalid character '<'".
+	if !json.Valid(body) {
+		ct := resp.Header.Get("Content-Type")
+		return 0, fmt.Errorf("models.dev returned a non-JSON response (Content-Type %q); a proxy or captive portal may be intercepting the request", ct)
 	}
 	var raw map[string]struct {
 		Models map[string]struct {

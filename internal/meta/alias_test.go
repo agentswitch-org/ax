@@ -37,3 +37,36 @@ func TestAliasRoundTrip(t *testing.T) {
 		t.Fatalf("removed alias must resolve to itself, got %q", got)
 	}
 }
+
+// A short prefix of a launch id must keep resolving after adoption removes the
+// placeholder session (the picker shows shortened ids); an ambiguous prefix
+// must resolve to nothing rather than guess.
+func TestResolveAliasPrefix(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	if err := SaveAlias("1f6c842c-aaaa-4bbb-8ccc-000000000001", "real-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := ResolveAliasPrefix("1f6c842c"); !ok || got != "real-1" {
+		t.Fatalf("ResolveAliasPrefix(short) = (%q, %v), want (real-1, true)", got, ok)
+	}
+	if _, ok := ResolveAliasPrefix("ffffffff"); ok {
+		t.Fatal("unknown prefix must not resolve")
+	}
+	if _, ok := ResolveAliasPrefix(""); ok {
+		t.Fatal("empty prefix must not resolve")
+	}
+
+	if err := SaveAlias("1f6c842c-aaaa-4bbb-8ccc-000000000002", "real-2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ResolveAliasPrefix("1f6c842c"); ok {
+		t.Fatal("ambiguous prefix must not resolve")
+	}
+
+	// Aliases exposes the forward map for the list --json reverse join.
+	m := Aliases()
+	if m["1f6c842c-aaaa-4bbb-8ccc-000000000001"] != "real-1" || m["1f6c842c-aaaa-4bbb-8ccc-000000000002"] != "real-2" {
+		t.Fatalf("Aliases = %v, want both forward pointers", m)
+	}
+}

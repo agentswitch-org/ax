@@ -97,7 +97,20 @@ func (a App) runContinue(id string, o launchOpts) {
 		}
 	}
 	if !found {
-		fmt.Fprintf(os.Stderr, "ax: no local session %q\n", id)
+		// Distinguish "this session existed here and concluded" from a genuinely
+		// unknown id: a coordinator following the reuse guidance hits the reaped
+		// case constantly, and "no local session" reads as its own bookkeeping bug.
+		m := meta.Load(id)
+		switch {
+		case m.Mode != "" || m.Outcome != "" || state.Terminal(id):
+			at := ""
+			if t, ok := state.TerminalAt(id); ok {
+				at = " at " + t.Format(time.RFC3339)
+			}
+			fmt.Fprintf(os.Stderr, "ax: session %q concluded%s and its transcript is no longer indexed here; start a fresh session with the prior context as a handoff\n", id, at)
+		default:
+			fmt.Fprintf(os.Stderr, "ax: unknown session %q (no transcript, metadata, or launch alias on this host)\n", id)
+		}
 		os.Exit(1)
 	}
 
@@ -175,6 +188,7 @@ func (a App) runContinue(id string, o launchOpts) {
 	}
 
 	hargs := strings.TrimSpace(h.Args + " " + strings.Join(o.hflags, " "))
+	hargs = effortHargs(h, hargs, o.effort)
 	// A watched resume hangs on per-tool permission prompts the same way a launch
 	// does; inject the harness's bypass flag (only claude needs one).
 	if bp := autonomyBypass(h); bp != "" && !strings.Contains(" "+hargs+" ", " "+bp+" ") {

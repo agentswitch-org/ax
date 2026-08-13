@@ -72,6 +72,12 @@ type Harness struct {
 	// headless template already handles approval (codex, opencode). Injected by
 	// autonomyBypass instead of a hardcoded claude-specific flag.
 	SkipPermissions string `toml:"skip_permissions"`
+	// EffortArg is the args fragment that forwards `--effort` to the harness,
+	// with an {effort} placeholder for the level (e.g.
+	// `-c model_reasoning_effort={effort}` for codex). Empty means the harness
+	// has no reasoning-effort setting; a launch passing --effort then gets a
+	// warning instead of the flag silently vanishing.
+	EffortArg string `toml:"effort_arg"`
 }
 
 type harnessOverride struct {
@@ -89,6 +95,7 @@ type harnessOverride struct {
 	WaitingRe           *string `toml:"waiting_re"`
 	SkipPermissions     *string `toml:"skip_permissions"`
 	SandboxProfile      *string `toml:"sandbox_profile"`
+	EffortArg           *string `toml:"effort_arg"`
 }
 
 func (h harnessOverride) toHarness() Harness {
@@ -113,6 +120,7 @@ func applyHarnessOverride(base Harness, over harnessOverride) Harness {
 		{&base.WaitingRe, over.WaitingRe},
 		{&base.SkipPermissions, over.SkipPermissions},
 		{&base.SandboxProfile, over.SandboxProfile},
+		{&base.EffortArg, over.EffortArg},
 	} {
 		if f.src != nil {
 			*f.dst = *f.src
@@ -382,8 +390,8 @@ type Fence struct {
 	Allow []string `toml:"allow"`
 	// OnUnsupported chooses what happens when a fenced launch targets a harness ax
 	// cannot fence (codex, pi, opencode): "refuse" (default, fail closed) or
-	// "best-effort" (warn and launch unfenced). --fence best-effort overrides per
-	// launch.
+	// "best-effort" (warn and launch unfenced). --fence best-effort / --fence
+	// strict override per launch (strict restores the fail-closed default).
 	OnUnsupported string `toml:"on_unsupported"`
 }
 
@@ -497,8 +505,15 @@ func Default() Config {
 			// trust block codex itself writes when you answer the dialog, which
 			// pretrustDir does in ~/.codex/config.toml. resume carries the same
 			// approval flags so a re-entered session stays drivable.
-			Resume: "cd {dir} && codex resume {id} --sandbox danger-full-access -c approval_policy=\"never\" {args}",
-			Launch: "codex --sandbox danger-full-access -c approval_policy=\"never\" {args} {task}",
+			Resume: "cd {dir} && codex resume {id} --model {model} --sandbox danger-full-access -c approval_policy=\"never\" {args}",
+			// Resume-with-input: codex's own resume mechanism with the new task as
+			// the initial prompt (`codex resume <id> "PROMPT"`; headless via
+			// `codex exec resume <id> "PROMPT"`), so `ax continue` works for codex
+			// and a one-burst codex worker has a real reuse path (its process is
+			// reaped between tasks; `ax send` needs a live window, this does not).
+			ResumeInput:         "cd {dir} && codex resume {id} --model {model} --sandbox danger-full-access -c approval_policy=\"never\" {args} {task}",
+			ResumeInputHeadless: "cd {dir} && codex exec resume {id} --skip-git-repo-check --model {model} --sandbox danger-full-access -c approval_policy=\"never\" {args} {task}",
+			Launch:              "codex --model {model} --sandbox danger-full-access -c approval_policy=\"never\" {args} {task}",
 			// Headless codex must run unattended with full write access, including
 			// to .git (worktree add, commit). The `--dangerously-bypass-approvals-and-sandbox`
 			// escape hatch is documented as "solely for environments that are
@@ -508,11 +523,14 @@ func Default() Config {
 			// the worker. Request the first-class policy instead: the
 			// danger-full-access sandbox with an approval policy of never. That is
 			// honored on both API-key and ChatGPT accounts and never prompts.
-			LaunchHeadless: "codex exec --skip-git-repo-check --sandbox danger-full-access -c approval_policy=\"never\" {args} {task}",
+			LaunchHeadless: "codex exec --skip-git-repo-check --model {model} --sandbox danger-full-access -c approval_policy=\"never\" {args} {task}",
 			// codex's approval bypass rides in the Launch/Resume/Headless templates
 			// above (a sandbox+approval-policy pair, not a single flag), so there is
 			// no extra skip-permissions flag to add here.
 			SkipPermissions: "",
+			// codex has no --effort flag; its reasoning effort is the
+			// model_reasoning_effort config key, forwarded as a -c override.
+			EffortArg: "-c model_reasoning_effort={effort}",
 		},
 		{
 			Name:   "opencode",

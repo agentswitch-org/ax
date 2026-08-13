@@ -24,6 +24,7 @@ import (
 	"github.com/agentswitch-org/ax/internal/runs"
 	"github.com/agentswitch-org/ax/internal/session"
 	"github.com/agentswitch-org/ax/internal/shell"
+	"github.com/agentswitch-org/ax/internal/state"
 	"github.com/agentswitch-org/ax/internal/view"
 )
 
@@ -191,13 +192,37 @@ func (a App) Send(args []string) {
 		text = strings.TrimRight(string(b), "\n")
 	}
 	id = resolveID(id) // the launch id keeps working for a mint-its-own-id harness
+	// Fail closed on a session ax knows is not running: its liveness record says
+	// the wrapper is gone (concluded or crashed), so there is no harness to type
+	// into and any pane match would be a leftover. A session with NO record at
+	// all (a hand-started window ax adopted) still goes through: the mux layer
+	// verifies the pane's foreground before delivering.
+	if e, ok := live.Snapshot()[id]; ok && !live.Running(e) {
+		fmt.Fprintf(os.Stderr, "ax: %s\n", notRunningHint(id))
+		os.Exit(1)
+	}
 	if interrupt {
 		a.mux.Interrupt(id)
 	}
 	if err := a.mux.Send(id, text, !noEnter); err != nil {
-		fmt.Fprintln(os.Stderr, "ax:", err)
+		if state.Terminal(id) {
+			fmt.Fprintf(os.Stderr, "ax: %v (%s)\n", err, notRunningHint(id))
+		} else {
+			fmt.Fprintln(os.Stderr, "ax:", err)
+		}
 		os.Exit(1)
 	}
+}
+
+// notRunningHint describes a session `ax send` cannot reach because its process
+// is gone, distinguishing "concluded and reaped" (with the conclude time) from a
+// crash, and points at the working reuse path. Shared by send's fail-closed
+// check and its delivery-failure diagnostics.
+func notRunningHint(id string) string {
+	if at, ok := state.TerminalAt(id); ok {
+		return fmt.Sprintf("session %s concluded at %s and its process was reaped; `ax send` needs a live session — use `ax continue %s \"TASK\"` to resume it with new input", id, at.Format(time.RFC3339), id)
+	}
+	return fmt.Sprintf("session %s is not running (its process exited without concluding); `ax restart %s` rebuilds it from its launch spec", id, id)
 }
 
 // Host manages self-registered dynamic hosts (`ax host register|deregister`), so

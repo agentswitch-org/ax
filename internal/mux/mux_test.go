@@ -374,6 +374,12 @@ list-clients)
 	fi
 	exit 0
 	;;
+list-panes)
+	if [ -n "$TMUX_FAKE_PANES" ]; then
+		printf '%b' "$TMUX_FAKE_PANES"
+	fi
+	exit 0
+	;;
 display-message)
 	if [ "$TMUX_FAKE_FAIL_DISPLAY" = "1" ]; then
 		exit 44
@@ -402,6 +408,66 @@ esac
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// Send must never type into a pane whose foreground is an interactive shell:
+// the paste would be EXECUTED as shell commands (the message is silently lost
+// and its content runs, e.g. `ax send` starting a dev server in an unrelated
+// repo). The tag matches the pane; the foreground check must still refuse.
+func TestTmuxSendRefusesShellForegroundPane(t *testing.T) {
+	installFakeTmux(t)
+	id := "019ff8ea-876e-7941-8aa3-1316b0cd0017"
+	t.Setenv("TMUX_FAKE_PANES", "@5\t"+id+"\tbash\tax run "+id+" x\n")
+
+	err := (tmux{}).Send(id, "ADDENDUM — local development notes", true)
+	if err == nil || !strings.Contains(err.Error(), "shell") {
+		t.Fatalf("tmux.Send into a shell pane = %v, want a refusal naming the shell", err)
+	}
+}
+
+// The start-command fallback must skip a shell-foreground pane entirely: a
+// window whose start command embeds the id but whose harness exited to a shell
+// is not the session, for input purposes.
+func TestLocatePaneFallbackSkipsShellPane(t *testing.T) {
+	installFakeTmux(t)
+	id := "019ff8ea-876e-7941-8aa3-1316b0cd0017"
+	// No tag (adopted/hand-started shape): only the start command carries the id.
+	t.Setenv("TMUX_FAKE_PANES", "@5\t\tzsh\tclaude --resume "+id+"\n")
+
+	if w, _, ok := locatePane(id); ok {
+		t.Fatalf("locatePane matched shell pane %q, want no input target", w)
+	}
+
+	// The same pane with the harness in the foreground is a valid target.
+	t.Setenv("TMUX_FAKE_PANES", "@5\t\tclaude\tclaude --resume "+id+"\n")
+	w, cur, ok := locatePane(id)
+	if !ok || w != "@5" || cur != "claude" {
+		t.Fatalf("locatePane harness pane = (%q, %q, %v), want (@5, claude, true)", w, cur, ok)
+	}
+}
+
+// Locate (window handle for focus/close) still finds a dead-harness window; only
+// the input path refuses it.
+func TestLocateStillFindsShellPaneWindow(t *testing.T) {
+	installFakeTmux(t)
+	id := "019ff8ea-876e-7941-8aa3-1316b0cd0017"
+	t.Setenv("TMUX_FAKE_PANES", "@5\t"+id+"\tbash\tax run "+id+" x\n")
+
+	if w, ok := (tmux{}).Locate(id); !ok || w != "@5" {
+		t.Fatalf("tmux.Locate tagged shell pane = (%q, %v), want (@5, true)", w, ok)
+	}
+}
+
+// A send that cannot be delivered must fail, not silently vanish: the none
+// backend used to return nil, so a coordinator's `ax send` outside any
+// multiplexer read as delivered while the message went nowhere.
+func TestNoneSendAndInterruptFail(t *testing.T) {
+	if err := (none{}).Send("id", "text", true); err == nil {
+		t.Error("none.Send = nil, want an error (input cannot be delivered)")
+	}
+	if err := (none{}).Interrupt("id"); err == nil {
+		t.Error("none.Interrupt = nil, want an error")
+	}
 }
 
 // closeWindowArgs targets kill-window at a specific window id, so closing a

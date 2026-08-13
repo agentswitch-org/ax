@@ -81,6 +81,12 @@ func main() {
 		usage()
 		os.Exit(2)
 	case actionVerb:
+		// `ax <verb> --help` (or -h) prints usage instead of the flag being
+		// consumed as a positional (send used to try it as a session id).
+		if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") {
+			usage()
+			return
+		}
 		switch name {
 		case "pick":
 			a.Pick()
@@ -892,15 +898,26 @@ func discoverID(harness, axid, command string, before map[string]bool, t *tracke
 			// contract that makes the id printed at launch a working handle for
 			// the session's whole life: `ax read/wait/result/send/kill` resolve
 			// through it, so a caller never needs to learn the adopted id.
-			if m := adoptControlMeta(axid); hasControlMeta(m) {
+			// Order matters: copy meta/hook state to the real id, THEN write the
+			// alias, THEN remove the placeholder copies. Removing the placeholder
+			// before the alias lands leaves a window where the launch id resolves
+			// to nothing at all — a concurrent `ax result/read/wait <launch-id>`
+			// would report "unknown session" mid-adoption.
+			m := adoptControlMeta(axid)
+			if hasControlMeta(m) {
 				meta.Save(id, m)
-				meta.Remove(axid)
 			}
-			if hs, ok := state.HookState(axid); ok {
+			hs, hadHook := state.HookState(axid)
+			if hadHook {
 				state.WriteHook(id, hs)
-				state.RemoveHook(axid)
 			}
 			meta.SaveAlias(axid, id)
+			if hasControlMeta(m) {
+				meta.Remove(axid)
+			}
+			if hadHook {
+				state.RemoveHook(axid)
+			}
 			t.set(id)
 			live.Start(id, command)
 			live.Remove(axid) // liveness handed off from the placeholder
@@ -1099,7 +1116,7 @@ func usage() {
      [--task-file PATH|-] [--behavior PATH] [--behavior-text TEXT] [--model M] [--effort E]
      [--run R] [--group R] [--name N] [--parent P] [--label k=v]... [--host H]
      [--max-cost N] [--max-tokens N] [--max-workers N] [--max-depth N] [--timeout D]
-     [--write GLOB]... [--no-write] [--no-subagents] [--fence best-effort]
+     [--write GLOB]... [--no-write] [--no-subagents] [--fence best-effort|strict]
      [--accept ./check.sh] [--wait] [--unattended] [--interactive] [--attach] [--headless] [--json] [--dir D] [-- FLAGS]
      [--close-on-done] [--clean-env] [--env KEY=VAL] [--auth subscription|api|env:VAR] [--api]
      [--sandbox | --no-sandbox]

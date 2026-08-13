@@ -191,6 +191,9 @@ func prefixName(name string) string {
 // none is the no-multiplexer backend: it reports inactive and every operation is
 // a no-op. It is the honest answer when ax runs outside any multiplexer and the
 // user has not opted into a real process backend (that is a separate build).
+// Send/Interrupt are the exception to the no-op rule: input that cannot be
+// delivered must FAIL, not vanish — a coordinator steering a worker through
+// `ax send` must never read a dropped message as delivered.
 type none struct{}
 
 func (none) Active() bool                            { return false }
@@ -200,12 +203,16 @@ func (none) Locate(string) (string, bool)            { return "", false }
 func (none) Live() map[string]string                 { return nil }
 func (none) Panes() []Pane                           { return nil }
 func (none) Focus(string) error                      { return nil }
-func (none) Send(string, string, bool) error         { return nil }
-func (none) Interrupt(string) error                  { return nil }
-func (none) PaneTail(string, int) string             { return "" }
-func (none) MoveWindow(string, string) error         { return nil }
-func (none) CloseWindow(string) error                { return nil }
-func (none) Retag(string) error                      { return nil }
+func (none) Send(sessionID string, _ string, _ bool) error {
+	return fmt.Errorf("no multiplexer backend: cannot deliver input to session %q (set `mux` in config, or run inside tmux)", sessionID)
+}
+func (none) Interrupt(sessionID string) error {
+	return fmt.Errorf("no multiplexer backend: cannot interrupt session %q", sessionID)
+}
+func (none) PaneTail(string, int) string     { return "" }
+func (none) MoveWindow(string, string) error { return nil }
+func (none) CloseWindow(string) error        { return nil }
+func (none) Retag(string) error              { return nil }
 
 type tmux struct{}
 
@@ -377,28 +384,39 @@ func killStrayWindow(stray string) {
 // which embeds the session id (e.g. "claude --resume <id>"). The fallback catches
 // windows opened before tagging and is the more reliable signal.
 func (tmux) Locate(sessionID string) (string, bool) {
+	w, _, ok := locatePane(sessionID)
+	return w, ok
+}
+
+// locatePane is Locate plus the pane's current foreground command, so an input
+// path (Send/Interrupt) can tell a live harness pane from one that fell back to
+// a shell. The fallback match requires the pane's foreground NOT to be an
+// interactive shell: a pane whose start command embeds the id but whose harness
+// exited to a shell must never be an input target (typed text would be EXECUTED
+// as shell commands), though it stays fine as a window handle for focus/close.
+func locatePane(sessionID string) (window, curCmd string, ok bool) {
 	if sessionID == "" {
-		return "", false
+		return "", "", false
 	}
 	out, err := exec.Command("tmux", "list-panes", "-a", "-F",
 		"#{window_id}\t#{@ax_session}\t#{pane_current_command}\t#{pane_start_command}").Output()
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
-	fallback := ""
+	fallback, fallbackCmd := "", ""
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		f := strings.SplitN(line, "\t", 4)
 		if len(f) < 4 {
 			continue
 		}
 		if f[1] == sessionID && !staleTaggedPane(f[2], f[3], sessionID) {
-			return f[0], true // the tag is authoritative
+			return f[0], f[2], true // the tag is authoritative
 		}
-		if fallback == "" && startCmdOwns(f[3], sessionID) {
-			fallback = f[0]
+		if fallback == "" && startCmdOwns(f[3], sessionID) && !isInteractiveShell(f[2]) {
+			fallback, fallbackCmd = f[0], f[2]
 		}
 	}
-	return fallback, fallback != ""
+	return fallback, fallbackCmd, fallback != ""
 }
 
 // startCmdOwns reports whether a pane's start command runs sessionID itself, as
@@ -578,9 +596,15 @@ func currentTmuxClientFromDisplayMessage() string {
 // per-line submits; short text uses literal send-keys. enter submits with a
 // trailing Enter.
 func (t tmux) Send(sessionID, text string, enter bool) error {
-	w, ok := t.Locate(sessionID)
+	w, cur, ok := locatePane(sessionID)
 	if !ok {
 		return fmt.Errorf("session %q not open in tmux", sessionID)
+	}
+	// Typed text lands in whatever process is in the pane's foreground. If the
+	// harness died and a shell took over, the paste would EXECUTE the message
+	// as shell commands (and the session never sees it) — refuse instead.
+	if isInteractiveShell(cur) {
+		return fmt.Errorf("session %q: pane foreground is a shell (%s), not the harness; refusing to type into it — the text would run as shell commands", sessionID, cur)
 	}
 	// "--" ends tmux's own flag parsing, so text starting with "-" (a bullet
 	// list, "--continue") is delivered as input rather than read as options.
@@ -605,11 +629,15 @@ func (t tmux) Send(sessionID, text string, enter bool) error {
 	return nil
 }
 
-// Interrupt sends ctrl-c into the window running sessionID.
+// Interrupt sends ctrl-c into the window running sessionID. Same input guard as
+// Send: a ctrl-c into a leftover shell is not an interrupt of the session.
 func (t tmux) Interrupt(sessionID string) error {
-	w, ok := t.Locate(sessionID)
+	w, cur, ok := locatePane(sessionID)
 	if !ok {
 		return fmt.Errorf("session %q not open in tmux", sessionID)
+	}
+	if isInteractiveShell(cur) {
+		return fmt.Errorf("session %q: pane foreground is a shell (%s), not the harness", sessionID, cur)
 	}
 	return exec.Command("tmux", "send-keys", "-t", w, "C-c").Run()
 }

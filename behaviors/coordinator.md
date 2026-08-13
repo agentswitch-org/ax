@@ -176,6 +176,14 @@ claude (ax warns and ignores it, since claude sustains its own agent loop), so a
 claude coordinator's watchdog is the heartbeat wait above. Same invariant either
 way: no live workers without an outstanding wait covering them.
 
+For codex, `--self-propel` is effectively mandatory, not an optimization: codex
+tends to end its turn after one burst of work, and without the pump the session
+sits idle with the task unfinished. The corollary for anyone watching a codex
+worker: an `exit` event does NOT mean its task finished — self-propel may
+re-invoke it moments later and complete the work. The reliable done signal is
+the terminal state (`ax wait` / `reuse_ready`) or the expected artifact on disk
+(`--propel-watch`), never the event stream alone.
+
 ## First turn, and after any restart
 
 1. Read your task (your first message). It is the current goal.
