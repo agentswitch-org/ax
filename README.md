@@ -119,37 +119,39 @@ brew upgrade --cask agentswitch-org/ax/ax
 ### Release candidates
 
 Release candidates use tags such as `v0.1.3-rc.1`. They publish as GitHub
-prereleases, which the "latest release" pages and APIs skip, so an installer
-that resolves "latest" hands you the previous stable version instead.
+prereleases, which `releases/latest` does not return; the blocks below resolve
+the newest release directly.
 
-The blocks below are copy-paste with no editing: they resolve the newest
-release (including prereleases) themselves, and they only touch github.com,
-so they work on networks where agentswitch.org is blocked.
-
-macOS, Linux, and WSL (installs to `~/.local/bin`, no sudo):
+macOS and Linux:
 
 ```sh
 set -eu
 tag=$(curl -fsSL https://api.github.com/repos/agentswitch-org/ax/releases |
   sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
+test -n "$tag"
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; esac
-curl -fL -o /tmp/ax.tar.gz \
-  "https://github.com/agentswitch-org/ax/releases/download/$tag/ax_${tag#v}_${os}_${arch}.tar.gz"
+curl -fL \
+  "https://github.com/agentswitch-org/ax/releases/download/$tag/ax_${tag#v}_${os}_${arch}.tar.gz" \
+  -o /tmp/ax.tar.gz
 tar -xzf /tmp/ax.tar.gz -C /tmp ax
-/tmp/ax version
-mkdir -p ~/.local/bin && install -m 0755 /tmp/ax ~/.local/bin/ax
+mkdir -p ~/.local/bin
+install -m 0755 /tmp/ax ~/.local/bin/ax
+ax version
 ```
 
-Debian, Ubuntu, and WSL via the `.deb` instead:
+Debian, Ubuntu, and WSL:
 
 ```sh
 set -eu
+arch=$(dpkg --print-architecture)
 tag=$(curl -fsSL https://api.github.com/repos/agentswitch-org/ax/releases |
   sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
-arch=$(dpkg --print-architecture)
-curl -fL -o /tmp/ax.deb \
-  "https://github.com/agentswitch-org/ax/releases/download/$tag/ax_${tag#v}_linux_${arch}.deb"
+test -n "$tag"
+version=${tag#v}
+curl -fL \
+  "https://github.com/agentswitch-org/ax/releases/download/$tag/ax_${version}_linux_${arch}.deb" \
+  -o /tmp/ax.deb
 sudo apt install /tmp/ax.deb
 ax version
 ```
@@ -164,7 +166,7 @@ Expand-Archive "$env:TEMP\ax.zip" -DestinationPath "$env:LOCALAPPDATA\ax\bin" -F
 & "$env:LOCALAPPDATA\ax\bin\ax.exe" version
 ```
 
-Where agentswitch.org is reachable, the shorter forms still work (pin any tag):
+Homebrew, or pinning a tag through the installer:
 
 ```sh
 brew install --cask agentswitch-org/ax/ax-rc
