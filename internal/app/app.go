@@ -763,14 +763,14 @@ func (a App) remoteAttachCmd(h config.Host, id string, override *string) string 
 // id, with "--adopt <harness>" for a mint-its-own-id launch; the session may
 // not exist yet on that path.
 func (a App) Attach(args []string) {
-	id, override, cmd, hasCmd, adopt, parseErr := parseAttachArgs(args)
+	id, override, cmd, hasCmd, adopt, yolo, parseErr := parseAttachArgs(args)
 	if parseErr != nil {
 		fmt.Fprintln(os.Stderr, "ax:", parseErr)
 		exitFn(2)
 		return
 	}
 	if id == "" {
-		fmt.Fprintln(os.Stderr, "usage: ax attach <id> [--args <flags>]")
+		fmt.Fprintln(os.Stderr, "usage: ax attach <id> [--args <flags>] [--yolo]")
 		exitFn(2)
 		return
 	}
@@ -811,15 +811,22 @@ func (a App) Attach(args []string) {
 	}
 	loadIndex()
 	byName := harnessByName(cfg.Harnesses)
+	attachOne := func(s session.Session) {
+		if yolo {
+			override = yoloOverride(byName[s.Harness], override)
+			stopHeldForRelaunch(s.ID)
+		}
+		cmd := resumeCmd(byName[s.Harness], s, override)
+		if err := localAttachPreflight(s.ID, cmd); err != nil {
+			reportAttachError(s.ID, "attach", err)
+			exitFn(1)
+			return
+		}
+		execHeldFn(s.ID, cmd)
+	}
 	for _, s := range sessions {
 		if s.ID == id {
-			cmd := resumeCmd(byName[s.Harness], s, override)
-			if err := localAttachPreflight(s.ID, cmd); err != nil {
-				reportAttachError(s.ID, "attach", err)
-				exitFn(1)
-				return
-			}
-			execHeldFn(s.ID, cmd)
+			attachOne(s)
 			return
 		}
 	}
@@ -827,13 +834,7 @@ func (a App) Attach(args []string) {
 	if realID != id {
 		for _, s := range sessions {
 			if s.ID == realID {
-				cmd := resumeCmd(byName[s.Harness], s, override)
-				if err := localAttachPreflight(s.ID, cmd); err != nil {
-					reportAttachError(s.ID, "attach", err)
-					exitFn(1)
-					return
-				}
-				execHeldFn(s.ID, cmd)
+				attachOne(s)
 				return
 			}
 		}
@@ -842,14 +843,53 @@ func (a App) Attach(args []string) {
 	exitFn(1)
 }
 
-// parseAttachArgs pulls the id, an optional "--args <flags>" override, and the
-// internal "--cmd <command>" / "--cmd-file <path>" / "--adopt <harness>" pair
-// out of the attach argv.
+// yoloOverride appends the harness's permission-bypass flag to the resume args, deduplicated.
+func yoloOverride(h config.Harness, override *string) *string {
+	base := h.Args
+	if override != nil {
+		base = *override
+	}
+	bp := autonomyBypass(h)
+	if bp == "" {
+		fmt.Fprintf(os.Stderr, "ax: harness %q has no permission-bypass flag configured (skip_permissions); relaunching with its default args\n", h.Name)
+		return &base
+	}
+	if !strings.Contains(" "+base+" ", " "+bp+" ") {
+		base = strings.TrimSpace(base + " " + bp)
+	}
+	return &base
+}
+
+// stopHeldForRelaunch kills the running process and waits for the holder
+// endpoint to vanish, so the follow-up attach spawns fresh instead of silently
+// reattaching the old process (which would discard the new flags).
+func stopHeldForRelaunch(id string) {
+	if err := live.Kill(id); err == nil {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			e, ok := live.Snapshot()[id]
+			if (!ok || !live.Running(e)) && !hold.Probe(id) {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	killCleanup(id)
+	hold.Cleanup(id)
+}
+
+// parseAttachArgs pulls the id, an optional "--args <flags>" override, the
+// "--yolo" relaunch flag (stop the running harness and resume it with the
+// harness's permission-bypass flag added), and the internal "--cmd <command>" /
+// "--cmd-file <path>" / "--adopt <harness>" pair out of the attach argv.
 // hasCmd distinguishes a present-but-empty --cmd (viewer mode, attach-only)
 // from no --cmd at all (reconstruct the command from the index).
-func parseAttachArgs(args []string) (id string, override *string, cmd string, hasCmd bool, adopt string, err error) {
+func parseAttachArgs(args []string) (id string, override *string, cmd string, hasCmd bool, adopt string, yolo bool, err error) {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--yolo":
+			yolo = true
+			continue
 		case "--args":
 			if i+1 < len(args) {
 				v := args[i+1]
@@ -867,12 +907,12 @@ func parseAttachArgs(args []string) (id string, override *string, cmd string, ha
 		case "--cmd-file":
 			hasCmd = true
 			if i+1 >= len(args) {
-				return id, override, cmd, hasCmd, adopt, fmt.Errorf("--cmd-file needs a path")
+				return id, override, cmd, hasCmd, adopt, yolo, fmt.Errorf("--cmd-file needs a path")
 			}
 			path := args[i+1]
 			data, readErr := os.ReadFile(path)
 			if readErr != nil {
-				return id, override, cmd, hasCmd, adopt, fmt.Errorf("--cmd-file %s: %w", path, readErr)
+				return id, override, cmd, hasCmd, adopt, yolo, fmt.Errorf("--cmd-file %s: %w", path, readErr)
 			}
 			_ = os.Remove(path)
 			cmd = string(data)
@@ -1012,7 +1052,14 @@ func attachPty(id, cmd, adopt string) int {
 			fmt.Fprintln(os.Stderr, "ax:", err)
 		}
 	}
-	code, err := hold.Attach(id, spawn, openMenu)
+	// Relaunch chord: exec into `ax attach <id> --yolo` (same exec rationale as the menu chord).
+	openRelaunch := func() {
+		ax := self()
+		if err := execReplaceFn(ax, []string{ax, "attach", id, "--yolo"}, os.Environ()); err != nil {
+			fmt.Fprintln(os.Stderr, "ax:", err)
+		}
+	}
+	code, err := hold.Attach(id, spawn, openMenu, openRelaunch)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ax:", err)
 		return 1
@@ -1116,9 +1163,8 @@ func resolveIDFromSessions(id string, sessions []session.Session) string {
 	if m := prefixMatches(sessions, id); len(m) == 1 {
 		return m[0].ID
 	}
-	// A short prefix of a LAUNCH id: the placeholder session it would have
-	// prefix-matched is gone once the real session is adopted, so follow the
-	// alias files by prefix the same way.
+	// A short launch-id prefix: its placeholder session is gone after adoption,
+	// so prefix-match the alias files instead.
 	if aliased, ok := meta.ResolveAliasPrefix(id); ok {
 		return aliased
 	}

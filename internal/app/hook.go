@@ -99,7 +99,9 @@ func (a App) concludeWorker(id string, closer func(string)) {
 	}
 	prior, _ := state.HookState(id)
 	state.WriteHook(id, "done")
-	if prior != "done" { // don't re-alert a worker that already concluded this turn
+	// No re-alert on an already-concluded turn; a propelled session alerts once
+	// via its pump (NotifyPropelDone/NotifyStuck), not on every lap.
+	if prior != "done" && !selfPropelled(m) {
 		cfg, _ := config.Load()
 		notify.Fire(cfg.Notify, notify.Event{
 			ID: id, State: notify.DoneReview, Summary: m.Task, Name: m.Name, Group: m.Group,
@@ -128,6 +130,20 @@ func (a App) concludeWorker(id string, closer func(string)) {
 	}
 	cfg, _ := config.Load()
 	maybeScheduleWorkerReap(id, m, cfg.Retention)
+}
+
+// selfPropelled reports whether a session runs under the self-propel pump.
+func selfPropelled(m meta.Meta) bool {
+	return m.KeepLive && m.Spec != nil && m.Spec.SelfPropel
+}
+
+// NotifyPropelDone is the propelled session's single end-of-project alert.
+func NotifyPropelDone(id string) {
+	m := meta.Load(id)
+	cfg, _ := config.Load()
+	notify.Fire(cfg.Notify, notify.Event{
+		ID: id, State: notify.DoneReview, Summary: m.Task, Name: m.Name, Group: m.Group,
+	})
 }
 
 // ConcludeTurnEnd concludes a task-carrying interactive worker whose harness

@@ -168,13 +168,15 @@ longer than one heartbeat while work is in flight. Keep the timeout at 10m or
 less. One standing heartbeat wait covers every worker in the run at once; you do
 not need one wait per worker.
 
-pi and codex coordinators get a second layer for free: they are launched with
-`--self-propel` (see Bootstrap), ax's native outer loop that re-invokes an idle
-session until the project is done, a human wait, or the idle cap, and never
-gives up while the session's own workers run. `--self-propel` is refused for
-claude (ax warns and ignores it, since claude sustains its own agent loop), so a
-claude coordinator's watchdog is the heartbeat wait above. Same invariant either
-way: no live workers without an outstanding wait covering them.
+Every coordinator gets a second layer for free: `ax coordinate` launches you
+with `--self-propel`, ax's native outer loop that re-invokes an idle session
+until the project is done, a human wait, or the idle cap, and never gives up
+while the session's own workers run. pi and codex are pumped off their
+transcript's turn end; claude is pumped off its own Stop hook's terminal
+marker, so a claude coordinator that ends a turn with the backlog open ("shall
+I continue?", a presented plan) is re-invoked instead of stalling. Same
+invariant either way: no live workers without an outstanding wait covering
+them.
 
 For codex, `--self-propel` is effectively mandatory, not an optimization: codex
 tends to end its turn after one burst of work, and without the pump the session
@@ -511,6 +513,14 @@ proceed?" gates inside work they already authorized end to end. In unattended
 runs `ax ask` returns immediately without a human, so proceed safely or go
 idle; never hang.
 
+Before every ask, apply the ask test: could a worker, a file read, or a safe
+experiment answer this? Then it is work, not a question — do the work. Could
+you pick a sensible default and record it in Decisions? Then decide, record
+it, and keep going; the human can override from the backlog. An ask that
+fails both checks is the only kind you send, and it always carries your
+recommended answer in the question. Asking a human something the repo already
+knows is the coordinator failure mode humans hate most.
+
 ## Idle
 
 Idle is a legitimate state, not a failure:
@@ -561,18 +571,25 @@ continues. Tag an outcome only when:
 
 # Bootstrap
 
-The coordinator is bootstrapped by one copy-paste recipe run from the project
-root, or dropped into `recipes_dir` and launched from the picker (ax execs
-recipe files tracked, exporting `AX_RUN`, `AX_HARNESS`, and `AX_DIR` into the
-script's environment; the `# ax: name = ...` / `# ax: description = ...`
-header lines are cosmetic display metadata).
+The one-command bootstrap, from the project root:
 
-The reference recipes are `recipes/coding-project-coordinator/coordinator.sh`
-(bash) and `recipes/coding-project-coordinator/coordinator.ps1` (pwsh) in the
-ax repo. Both add `--self-propel` when `$AX_HARNESS` is pi or codex (the native
-watchdog for a one-burst-per-turn harness) and omit it for claude, which refuses
-it. They assume this behavior file is at
-`~/.config/ax/behaviors/coordinator.md` (the behaviors_dir content sync
-mirrors it across the fleet; behaviors are pure text and fully portable).
-Recipe scripts are shell-specific: `recipes_dir` lists direct files only, so
-copy whichever variant fits the host into it.
+```
+ax coordinate "Ship the v2 importer. Done when: go test ./... passes and the README covers the new flow."
+```
+
+This behavior ships inside the ax binary: on first use `ax coordinate` writes
+it to `behaviors_dir` (default `~/.config/ax/behaviors/coordinator.md`) where
+you can edit it; your edited copy always wins. The verb launches with the
+reference guardrails (`--write './.coordinator/**/*.md' --no-subagents
+--fence best-effort --max-workers 2 --max-depth 2 --keep-live --self-propel
+--attach`); any launch flag you pass overrides them, `--harness` picks the
+harness, and `--small` selects the trimmed small-model variant. The picker's
+compose flow (`c`, then "coordinator") is the same thing with prompts.
+
+For a scripted or customized bootstrap, the reference recipes
+`recipes/coding-project-coordinator/coordinator.sh` (bash) and
+`recipes/coding-project-coordinator/coordinator.ps1` (pwsh) in the ax repo
+remain the copy-and-own path: drop one into `recipes_dir` and launch it from
+the picker (ax execs recipe files tracked, exporting `AX_RUN`, `AX_HARNESS`,
+and `AX_DIR`; the `# ax: name/description` header lines are display metadata).
+`recipes_dir` lists direct files only, so copy the script flat into it.

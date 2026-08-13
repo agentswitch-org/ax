@@ -13,21 +13,20 @@ $Goal     = if ($args.Count -gt 0) { $args[0] } else {
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Dir '.coordinator') | Out-Null
 
-# pi/codex do one burst per turn and then stop, so they need ax's native outer
-# loop to stay alive between turns: --self-propel re-invokes the idle coordinator
+# --self-propel is ax's native outer loop: it re-invokes the idle coordinator
 # until the project is done, a human wait, or the idle cap, and never gives up
-# while its workers run. claude sustains its own agent loop and refuses the flag
-# (its anti-stall watchdog is the heartbeat wait in behaviors/coordinator.md), so
-# pass --self-propel only for the inline harnesses. The propel guards keep their
-# defaults on purpose: an open-ended coordinator has no shell-checkable "done" to
-# hand --propel-until, and progress detection already counts the run's live
-# workers and git state, so no --propel-watch is needed. $Propel stays an array
-# (direct assignment, not an `if` expression, which would unwrap the single
-# element to a string and make @Propel splat it character by character) so
-# splatting @Propel adds one arg for pi/codex and zero for claude (never an empty
-# arg, unlike a bare $null).
+# while its workers run. pi/codex are pumped off their transcript's turn end;
+# claude off its own Stop hook's terminal marker (so a claude coordinator that
+# ends a turn mid-project is re-invoked instead of stalling). The propel guards
+# keep their defaults on purpose: an open-ended coordinator has no
+# shell-checkable "done" to hand --propel-until, and progress detection already
+# counts the run's live workers and git state, so no --propel-watch is needed.
+# $Propel stays an array (direct assignment, not an `if` expression, which would
+# unwrap the single element to a string and make @Propel splat it character by
+# character) so splatting @Propel adds one arg for a supported harness and zero
+# otherwise (never an empty arg, unlike a bare $null).
 $Propel = @()
-if ($Harness -eq 'pi' -or $Harness -eq 'codex') { $Propel = @('--self-propel') }
+if ($Harness -in @('pi', 'codex', 'claude')) { $Propel = @('--self-propel') }
 
 # --max-workers 2 caps live children so a self-propelled coordinator cannot
 # over-spawn. --max-depth 2 lets workers sub-delegate one tier. For a small-model

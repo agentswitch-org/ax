@@ -23,7 +23,7 @@ import (
 // wholesale on apply (an absent key in the incoming profile clears the target's).
 var uiProfileKeys = []string{
 	"columns", "column", "keys",
-	"detach_prefix", "detach_key", "menu_key",
+	"detach_prefix", "detach_key", "menu_key", "relaunch_key",
 	"mux_prefix", "mux_group", "default_harness",
 }
 

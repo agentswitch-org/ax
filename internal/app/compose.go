@@ -16,9 +16,10 @@ import (
 // three shapes, then a directory, then launches. Plain-new is simply the first
 // choice, so today's quick-new stays one extra keystroke away.
 const (
-	composeModePlain    = "plain: a plain harness session"
-	composeModeBehavior = "behavior + prompt: a oneshot with a behavior and task"
-	composeModeRecipe   = "recipe: run a user-owned recipe script"
+	composeModePlain       = "plain: a plain harness session"
+	composeModeBehavior    = "behavior + prompt: a oneshot with a behavior and task"
+	composeModeCoordinator = "coordinator: run a whole project (self-propelled, delegates to workers)"
+	composeModeRecipe      = "recipe: run a user-owned recipe script"
 )
 
 // The behavior step's two non-file choices: type instruction text inline, or
@@ -48,7 +49,7 @@ func (a App) compose(cfg config.Config, hosts []view.HostStatus, hostByName map[
 	}
 
 	mode, _, err := a.find.Choose("mode ❯ ", "compose a launch for "+harness,
-		[]string{composeModePlain, composeModeBehavior, composeModeRecipe}, nil)
+		[]string{composeModePlain, composeModeBehavior, composeModeCoordinator, composeModeRecipe}, nil)
 	if err != nil || mode == "" {
 		return
 	}
@@ -57,9 +58,32 @@ func (a App) compose(cfg config.Config, hosts []view.HostStatus, hostByName map[
 		a.New(harness, false, nil)
 	case composeModeBehavior:
 		a.composeBehavior(cfg, harness)
+	case composeModeCoordinator:
+		a.composeCoordinator(cfg, harness)
 	case composeModeRecipe:
 		a.composeRecipe(cfg, harness)
 	}
+}
+
+// composeCoordinator is the picker's route into `ax coordinate`: prompt for the
+// project goal, pick the directory, then launch through the same defaults the
+// CLI verb applies (fence, keep-live, self-propel, attach).
+func (a App) composeCoordinator(cfg config.Config, harness string) {
+	goal, ok := a.find.PromptMultiline("goal", "the project goal for the coordinator (what does done look like?)", "")
+	if !ok || strings.TrimSpace(goal) == "" {
+		return
+	}
+	dir, ok := a.pickDir(cfg, harness)
+	if !ok {
+		return
+	}
+	h, found := coordinateHarness(cfg, harness)
+	if !found {
+		a.notify("no harness configured to coordinate with")
+		return
+	}
+	o := coordinateOpts(cfg, h, launchOpts{task: goal, dir: dir}, false)
+	composeLaunchFn(a, h.Name, o)
 }
 
 // chooseHarness presents the configured harnesses and returns the picked name.

@@ -173,12 +173,14 @@ func (w *clientWriter) close() {
 // the client down (terminal restored, holder still alive): it reopens the ax
 // picker in this terminal (an exec-replace, so it does not return on success).
 // nil means the caller has no picker to open (the menu chord then falls back to
-// a plain detach).
-func Attach(id string, spawn func() error, openMenu func()) (int, error) {
+// a plain detach). openRelaunch is the same shape for the relaunch chord
+// (Ctrl-A then y: relaunch resumed with the harness's permission-bypass flag).
+func Attach(id string, spawn func() error, openMenu, openRelaunch func()) (int, error) {
 	cfg, _ := config.Load()
 	prefix := DetachPrefixByte(cfg.DetachPrefix)
 	letter := DetachLetterByte(cfg.DetachKey)
 	menuLetter := MenuLetterByte(cfg.MenuKey)
+	relaunchLetter := RelaunchLetterByte(cfg.RelaunchKey)
 	if _, ok := ParseDetachKey(cfg.DetachPrefix); cfg.DetachPrefix != "" && !ok {
 		axlog.Printf("attach %s: bad detach_prefix %q; using ctrl-a", id, cfg.DetachPrefix)
 	}
@@ -187,6 +189,9 @@ func Attach(id string, spawn func() error, openMenu func()) (int, error) {
 	}
 	if _, ok := ParseDetachLetter(cfg.MenuKey); cfg.MenuKey != "" && !ok {
 		axlog.Printf("attach %s: bad menu_key %q; using a", id, cfg.MenuKey)
+	}
+	if _, ok := ParseDetachLetter(cfg.RelaunchKey); cfg.RelaunchKey != "" && !ok {
+		axlog.Printf("attach %s: bad relaunch_key %q; using y", id, cfg.RelaunchKey)
 	}
 	conn, err := dialOrCreate(id, spawn)
 	if err != nil {
@@ -257,10 +262,10 @@ func Attach(id string, spawn func() error, openMenu func()) (int, error) {
 	// picker), and from the platform's window-closed/kill signals (notifyDetach).
 	// Either way the holder lives on.
 	detached := new(atomic.Bool)
-	// menu records that the detach was a menu chord (Ctrl-A then a), so the
-	// teardown below reopens the picker instead of returning to the shell. It is
-	// set before detach() so the reader goroutine and the read loop agree.
+	// menu/relaunch record which chord caused the detach, set before detach()
+	// so the reader goroutine and the read loop agree on the follow-up.
 	menu := new(atomic.Bool)
+	relaunch := new(atomic.Bool)
 	var detachOnce sync.Once
 	detach := func() {
 		detachOnce.Do(func() {
@@ -293,15 +298,17 @@ func Attach(id string, spawn func() error, openMenu func()) (int, error) {
 				} else {
 					var fwd []byte
 					var act chordAction
-					fwd, act, pending = scanChord(buf[:n], prefix, letter, menuLetter, pending)
+					fwd, act, pending = scanChord(buf[:n], prefix, letter, menuLetter, relaunchLetter, pending)
 					if len(fwd) > 0 {
 						writer.send(MsgInput, fwd)
 					}
 					if act != chordNone {
-						// The menu chord shares the detach teardown; it only sets
-						// menu first so the read loop reopens the picker after.
+						// Menu/relaunch share the detach teardown; the flag picks the follow-up.
 						if act == chordMenu {
 							menu.Store(true)
+						}
+						if act == chordRelaunch {
+							relaunch.Store(true)
 						}
 						detach()
 						return
@@ -345,10 +352,11 @@ func Attach(id string, spawn func() error, openMenu func()) (int, error) {
 			}
 			restoreOnce.Do(restore)
 			if detached.Load() {
-				// A menu-chord detach reopens the picker in this terminal instead
-				// of returning to the shell. openMenu exec-replaces on success, so
-				// it does not return; if it fails (or is nil) fall through to the
-				// ordinary detach message: the session is detached either way.
+				// Chord follow-ups exec-replace on success; on failure (or nil)
+				// fall through to the ordinary detach message.
+				if relaunch.Load() && openRelaunch != nil {
+					openRelaunch()
+				}
 				if menu.Load() && openMenu != nil {
 					openMenu()
 				}
@@ -371,7 +379,8 @@ func Attach(id string, spawn func() error, openMenu func()) (int, error) {
 			// harness paints over it on the nudge, a scrolling one keeps it.
 			if !hinted && isTerm {
 				hinted = true
-				fmt.Printf("\r\n\x1b[2m[ax: attached; %s to detach, %s for the picker]\x1b[0m\r\n", DetachLabel(cfg.DetachPrefix, cfg.DetachKey), MenuLabel(cfg.DetachPrefix, cfg.MenuKey))
+				fmt.Printf("\r\n\x1b[2m[ax: attached; %s to detach, %s for the picker, %s to relaunch with permissions skipped]\x1b[0m\r\n",
+					DetachLabel(cfg.DetachPrefix, cfg.DetachKey), MenuLabel(cfg.DetachPrefix, cfg.MenuKey), RelaunchLabel(cfg.DetachPrefix, cfg.RelaunchKey))
 			}
 		case MsgOutput:
 			os.Stdout.Write(scrubber.Scrub(payload))
@@ -406,29 +415,25 @@ func TerminalSize(fd int) (rows, cols uint16, ok bool) {
 	return terminalSize(fd)
 }
 
-// chordAction is what an armed prefix resolved into: nothing yet, a plain
-// detach (return to the shell), or a menu detach (detach, then reopen the ax
-// picker). Both detach kinds tear the client down identically; only what
-// happens after the client exits differs.
+// chordAction is what an armed prefix resolved into. All detach kinds tear the
+// client down identically; only what happens after the client exits differs.
 type chordAction int
 
 const (
 	chordNone chordAction = iota
 	chordDetach
 	chordMenu
+	chordRelaunch
 )
 
 // scanChord runs the chord state machine over one read: bytes flow through to
 // fwd untouched except the prefix, which arms pending instead of forwarding.
-// The byte after an armed prefix decides: the detach letter detaches (neither
-// byte forwarded), the menu letter detaches-then-reopens-the-picker, the prefix
-// again forwards exactly one literal prefix (press it twice to type it),
-// anything else forwards the held prefix then that byte, lossless.
-// pendingIn/pendingOut carry the armed state across reads, so a prefix split
-// from its letter by a read boundary still chords. The Ctrl-backslash fallback
-// detaches anywhere, armed or not. On a chord the rest of the read is dropped,
-// never forwarded.
-func scanChord(p []byte, prefix, letter, menu byte, pendingIn bool) (fwd []byte, act chordAction, pendingOut bool) {
+// The byte after an armed prefix picks the action; prefix-prefix forwards one
+// literal prefix, prefix-other forwards both bytes lossless. The detach letter
+// wins a collision, so a misconfigured duplicate degrades to a plain detach.
+// pendingIn/pendingOut carry the armed state across read boundaries; ctrl-\
+// detaches anywhere; bytes after a chord in the same read are dropped.
+func scanChord(p []byte, prefix, letter, menu, relaunch byte, pendingIn bool) (fwd []byte, act chordAction, pendingOut bool) {
 	pending := pendingIn
 	for _, b := range p {
 		if pending {
@@ -438,6 +443,8 @@ func scanChord(p []byte, prefix, letter, menu byte, pendingIn bool) (fwd []byte,
 				return fwd, chordDetach, false
 			case menu:
 				return fwd, chordMenu, false
+			case relaunch:
+				return fwd, chordRelaunch, false
 			case prefix:
 				fwd = append(fwd, prefix)
 			default:

@@ -67,6 +67,11 @@ func Help(km keys.Map, detachKey string, rows, cols int) string {
 	}
 
 	var left []hItem
+	// Primary actions first, before any navigation detail.
+	left = append(left, section("START HERE"),
+		keyrow(strings.Join(km.Keys(keys.Compose), " / "), "start a new session: pick harness, mode, and folder"),
+		keyrow("enter", "resume the selected session"),
+		blank)
 	left = addGroup(left, "MOVE", "move")
 	left = append(left, blank)
 	left = addGroup(left, "SORT", "sort")
@@ -156,8 +161,9 @@ func Help(km keys.Map, detachKey string, rows, cols int) string {
 	}
 	n := max(len(left), len(right))
 	// drop the banner when the box is too short (rows) or too narrow (W) to
-	// hold it centered without overflowing the frame.
-	withBanner := rows >= len(bannerLines)+n+8 && W >= bannerW
+	// hold it centered without overflowing the frame (9 = borders, junctions,
+	// the two footer rows, subtitle, and the close tip).
+	withBanner := rows >= len(bannerLines)+n+9 && W >= bannerW
 
 	out(border("╔", "═", "╗"))
 	if withBanner {
@@ -180,6 +186,11 @@ func Help(km keys.Map, detachKey string, rows, cols int) string {
 			" " + cBord("│") + " " + rs + strings.Repeat(" ", max(0, colW-rw)) + " " + cBord("║"))
 	}
 	out(junction("╠", "╧", "╣"))
+	shellFoot := `from a shell:  ax claude "task" runs a tracked task  ·  ax coordinate "goal" runs a project`
+	if vis(shellFoot) > W {
+		shellFoot = runewidth.Truncate(shellFoot, W, "…")
+	}
+	out(full(cDim(shellFoot), vis(shellFoot)))
 	foot := "feedback  ·  support@agentswitch.org"
 	out(full(cDim(foot), vis(foot)))
 	out(border("╚", "═", "╝"))

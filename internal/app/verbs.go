@@ -192,11 +192,8 @@ func (a App) Send(args []string) {
 		text = strings.TrimRight(string(b), "\n")
 	}
 	id = resolveID(id) // the launch id keeps working for a mint-its-own-id harness
-	// Fail closed on a session ax knows is not running: its liveness record says
-	// the wrapper is gone (concluded or crashed), so there is no harness to type
-	// into and any pane match would be a leftover. A session with NO record at
-	// all (a hand-started window ax adopted) still goes through: the mux layer
-	// verifies the pane's foreground before delivering.
+	// Fail closed when the liveness record says the session is gone; no record
+	// at all (an adopted hand-started window) still goes through the mux guard.
 	if e, ok := live.Snapshot()[id]; ok && !live.Running(e) {
 		fmt.Fprintf(os.Stderr, "ax: %s\n", notRunningHint(id))
 		os.Exit(1)
@@ -214,10 +211,7 @@ func (a App) Send(args []string) {
 	}
 }
 
-// notRunningHint describes a session `ax send` cannot reach because its process
-// is gone, distinguishing "concluded and reaped" (with the conclude time) from a
-// crash, and points at the working reuse path. Shared by send's fail-closed
-// check and its delivery-failure diagnostics.
+// notRunningHint distinguishes "concluded and reaped" from a crash and names the working reuse path.
 func notRunningHint(id string) string {
 	if at, ok := state.TerminalAt(id); ok {
 		return fmt.Sprintf("session %s concluded at %s and its process was reaped; `ax send` needs a live session — use `ax continue %s \"TASK\"` to resume it with new input", id, at.Format(time.RFC3339), id)

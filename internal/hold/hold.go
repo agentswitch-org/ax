@@ -36,9 +36,10 @@ import (
 // stolen. The detach_prefix config setting rebinds the prefix to any
 // ctrl-<letter>; detach_key rebinds the command letter.
 const (
-	DefaultDetachPrefix byte = 0x01 // Ctrl-A, the screen prefix
-	DefaultDetachLetter byte = 'd'  // d for detach, as in screen
-	DefaultMenuLetter   byte = 'a'  // a for "ax picker": detach then reopen the TUI
+	DefaultDetachPrefix   byte = 0x01 // Ctrl-A, the screen prefix
+	DefaultDetachLetter   byte = 'd'  // d for detach, as in screen
+	DefaultMenuLetter     byte = 'a'  // a for "ax picker": detach then reopen the TUI
+	DefaultRelaunchLetter byte = 'y'  // y for "yolo": relaunch resumed with the harness's permission bypass
 )
 
 // detachFallback is Ctrl-backslash (0x1c, the historic dtach default): kept as
@@ -113,6 +114,15 @@ func MenuLetterByte(setting string) byte {
 	return DefaultMenuLetter
 }
 
+// RelaunchLetterByte resolves a relaunch_key setting to the relaunch chord's
+// command letter, falling back to y. Shares the detach prefix.
+func RelaunchLetterByte(setting string) byte {
+	if b, ok := ParseDetachLetter(setting); ok {
+		return b
+	}
+	return DefaultRelaunchLetter
+}
+
 // DetachLabel is the human name of the configured detach chord ("Ctrl-A then
 // d"), for the attach hint, the picker hint row, and the help screen.
 func DetachLabel(prefixSetting, keySetting string) string {
@@ -125,6 +135,12 @@ func DetachLabel(prefixSetting, keySetting string) string {
 func MenuLabel(prefixSetting, keySetting string) string {
 	p := DetachPrefixByte(prefixSetting)
 	return "Ctrl-" + string(rune('A'+p-1)) + " then " + string(rune(MenuLetterByte(keySetting)))
+}
+
+// RelaunchLabel is the human name of the configured relaunch chord ("Ctrl-A then y").
+func RelaunchLabel(prefixSetting, keySetting string) string {
+	p := DetachPrefixByte(prefixSetting)
+	return "Ctrl-" + string(rune('A'+p-1)) + " then " + string(rune(RelaunchLetterByte(keySetting)))
 }
 
 // Backends selectable via the hold_backend config setting.

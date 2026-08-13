@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 			os.Stdout.WriteString(menuReopenMarker + "\r\n")
 			os.Exit(menuReopenCode)
 		}
-		code, err := Attach(id, nil, openMenu)
+		code, err := Attach(id, nil, openMenu, nil)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "helper:", err)
 			os.Exit(3)

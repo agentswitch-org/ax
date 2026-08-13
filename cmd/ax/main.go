@@ -83,7 +83,8 @@ func main() {
 	case actionVerb:
 		// `ax <verb> --help` (or -h) prints usage instead of the flag being
 		// consumed as a positional (send used to try it as a session id).
-		if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") {
+		// coordinate carries its own focused usage text, so it handles the flag.
+		if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") && name != "coordinate" {
 			usage()
 			return
 		}
@@ -136,6 +137,8 @@ func main() {
 			a.Restart(args)
 		case "continue":
 			a.Continue(args)
+		case "coordinate":
+			a.Coordinate(args)
 		case "runs":
 			a.Runs(args)
 		case "metrics":
@@ -282,7 +285,7 @@ func nearVerb(cmd string) string {
 	for _, v := range []string{
 		"pick", "new", "list", "attach", "preview", "search", "kill",
 		"archive", "unarchive", "prune", "tag", "read", "result", "wait", "send", "ask", "reply", "move",
-		"restart", "continue", "runs", "metrics", "host", "config", "hook",
+		"restart", "continue", "coordinate", "runs", "metrics", "host", "config", "hook",
 		"check", "log", "models", "version", "help",
 	} {
 		if editDistanceAtMost1(cmd, v) {
@@ -327,7 +330,7 @@ func isKnownVerb(cmd string) bool {
 	switch cmd {
 	case "run", "pick", "new", "list", "attach", "preview", "search", "kill",
 		"archive", "unarchive", "prune", "tag", "read", "result", "wait", "send", "ask", "reply", "move",
-		"restart", "continue", "runs", "metrics", "host", "config", "hook", "hookstate",
+		"restart", "continue", "coordinate", "runs", "metrics", "host", "config", "hook", "hookstate",
 		"await-close", "reap-worker", "fence-check", "check", "log", "models",
 		"version", "--version", "help", "-h", "--help":
 		return true
@@ -727,14 +730,21 @@ func watchTurnEnd(get func() string, write func([]byte), done <-chan struct{}) {
 					format = h.Format
 				}
 			}
-			if format != "pi" && format != "codex" {
-				return // hooked (claude) or unwatchable: the hook or exit is authoritative
-			}
-			// Build the self-propel pump only for an opted-in keep-live session with
-			// a pty to inject into. Everything else (no flag, no pty, non-keep-live)
-			// keeps the unchanged conclude-on-turn-end behavior below.
-			if !reopenOnly && write != nil && m.KeepLive && m.Spec != nil && m.Spec.SelfPropel {
+			propelled := !reopenOnly && write != nil && m.KeepLive && m.Spec != nil && m.Spec.SelfPropel
+			if format == "claude" {
+				// claude's Stop hook is authoritative; without a pump the watcher
+				// retires. With one, the hook's terminal marker IS the turn-end signal.
+				if !propelled {
+					return
+				}
 				prop = newPropeller(get, write, m.Dir, m.Group)
+			} else {
+				if format != "pi" && format != "codex" {
+					return // unwatchable (opencode): exit is authoritative
+				}
+				if propelled {
+					prop = newPropeller(get, write, m.Dir, m.Group)
+				}
 			}
 		}
 		if file == "" {
@@ -753,6 +763,34 @@ func watchTurnEnd(get func() string, write func([]byte), done <-chan struct{}) {
 			// they finish, and runs the submit watchdog (an inject with no
 			// transcript activity counts as an idle turn so the cap still advances).
 			prop.Tick()
+		}
+		if format == "claude" {
+			// The Stop hook already concluded the turn; ask the pump. Continue-shaped
+			// actions reopen the lifecycle so wait/picker track the next turn; a
+			// stopping pump leaves the marker standing and retires the watcher.
+			if info, err := os.Stat(file); err == nil && info.ModTime().After(lastMod) {
+				lastMod = info.ModTime()
+				prop.NoteActivity() // the transcript moved: an outstanding inject landed
+			}
+			if !state.Terminal(id) {
+				continue
+			}
+			var act propel.Action
+			if state.Failed(id) {
+				act = prop.OnTurnError("failed turn")
+			} else {
+				act = prop.OnTurnEnd()
+			}
+			switch act {
+			case propel.ActionReinject, propel.ActionWaitWorkers, propel.ActionWaitHuman:
+				app.ReopenTurnLifecycle(id)
+			case propel.ActionDone:
+				app.NotifyPropelDone(id) // the pump owns the end-of-project alert
+			}
+			if prop.Stopped() {
+				return
+			}
+			continue
 		}
 		info, err := os.Stat(file)
 		if err != nil || !info.ModTime().After(lastMod) {
@@ -783,8 +821,12 @@ func watchTurnEnd(get func() string, write func([]byte), done <-chan struct{}) {
 			// session failed itself once the streak cap trips.
 			prop.OnTurnError(reason)
 		default:
-			// A clean turn-end: let the pump decide to re-inject or stop.
-			prop.OnTurnEnd()
+			// A clean turn-end: let the pump decide to re-inject or stop. When it
+			// stops with the project done, fire the end-of-project alert the
+			// per-turn conclude path suppresses for propelled sessions.
+			if prop.OnTurnEnd() == propel.ActionDone {
+				app.NotifyPropelDone(get())
+			}
 		}
 	}
 }
@@ -898,11 +940,8 @@ func discoverID(harness, axid, command string, before map[string]bool, t *tracke
 			// contract that makes the id printed at launch a working handle for
 			// the session's whole life: `ax read/wait/result/send/kill` resolve
 			// through it, so a caller never needs to learn the adopted id.
-			// Order matters: copy meta/hook state to the real id, THEN write the
-			// alias, THEN remove the placeholder copies. Removing the placeholder
-			// before the alias lands leaves a window where the launch id resolves
-			// to nothing at all — a concurrent `ax result/read/wait <launch-id>`
-			// would report "unknown session" mid-adoption.
+			// Copy state to the real id, then alias, then remove the placeholder:
+			// any other order leaves a window where the launch id resolves to nothing.
 			m := adoptControlMeta(axid)
 			if hasControlMeta(m) {
 				meta.Save(id, m)
@@ -1069,6 +1108,8 @@ func usage() {
   ax claude "fix the flaky test" run a task in a tracked background window
   ax "fix the flaky test"        same, when default_harness is set in config
   ax new                         start a fresh interactive session
+  ax coordinate "ship v2"        run a whole project: a self-propelled
+                                 coordinator that delegates to tracked workers
 
  Full manual and recipes: https://agentswitch.org
 
@@ -1081,11 +1122,13 @@ func usage() {
                          print local indexed sessions; --federated adds hosts
                          configured on this machine; --json emits the wire report
                          --all includes archived, --archived shows only archived
-  ax attach <id> [--args FLAGS]
+  ax attach <id> [--args FLAGS] [--yolo]
                          (re)attach a held session in this window (ctrl-a then
                          d, or closing the window, detaches; ctrl-a then a
-                         detaches and reopens the picker; rebind via
-                         detach_prefix / detach_key / menu_key)
+                         detaches and reopens the picker; ctrl-a then y — or
+                         --yolo — stops the harness and resumes this same
+                         session with its permission-bypass flag added; rebind
+                         via detach_prefix / detach_key / menu_key / relaunch_key)
   ax preview <id>        print a session's preview (served to remote viewers)
   ax search <query>      print ids of sessions whose transcript matches; --json
                          returns ranked matches with metadata and snippets
@@ -1123,9 +1166,10 @@ func usage() {
      [--keep-live] [--keep-live-for D]
 	     [--self-propel [--propel-prompt P] [--propel-until CMD] [--max-idle-turns N]
 	      [--propel-backoff D] [--propel-watch PATH]]
-	                         --self-propel (pi/codex only) is the outer loop: when the
+	                         --self-propel (pi/codex/claude) is the outer loop: when the
 	                         session ends a turn but its task is not done, ax re-invokes
-	                         it so a one-burst local model keeps grinding. --propel-prompt
+	                         it so it keeps grinding (pi/codex via their transcript's turn
+	                         end, claude via its Stop hook's marker). --propel-prompt
 	                         replaces the generic built-in continue-prompt. Stops on a done
 	                         sentinel (PROJECT-COMPLETE), a --propel-until check that exits
 	                         0, a human wait, or --max-idle-turns (default 8) no-progress
@@ -1166,6 +1210,12 @@ func usage() {
                          live window) and a cold launch. Watched by default; --wait
                          runs it as a job. A harness with no resume-with-input form
                          degrades with a message
+  ax coordinate "GOAL" [--harness H] [--small] [launch flags]
+                         one-command coordinator bootstrap: launches the bundled
+                         coordinator behavior fenced to ./.coordinator state,
+                         keep-live, self-propelled, and attached, coordinating
+                         tracked workers until the goal is done. "ax coordinate
+                         --help" details the defaults; any launch flag overrides
   ax read [--host H] <id>|--run R [--hosts|--federated] [--since N] [--limit N] [--format json|text]
                          print turns; --follow streams turn/waiting/exit events
                          (--active, --from-now, --with-content, --timeout D, --events LIST,

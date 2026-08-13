@@ -38,18 +38,27 @@ func repoRoot(t *testing.T) string {
 	return strings.TrimSpace(string(out))
 }
 
-// TestCoreIsCoordinatorFree enforces the extraction's end state: the coordinator
-// is a recipe (recipes/coordinator.md), never a concept baked into core Go code.
-// It walks every tracked Go file and fails if the banned word appears in a CODE
-// token (identifier, string, or other literal). The ban applies to code
-// identifiers only, NOT to comments: a // or /* */ comment may mention the word
-// freely, since prose about the extraction is not the concept leaking into core.
-// Comments are stripped by go/scanner before scanning; only non-comment tokens are
-// checked. The word is assembled from two fragments so this test does not match
-// itself; recipes/ (the recipe lives there) and this file are excluded.
-func TestCoreIsCoordinatorFree(t *testing.T) {
+// TestCoordinatorStaysAtTheFrontDoor: `ax coordinate` made the coordinator a
+// first-class verb, but it stays policy at the edge (verb, compose mode, help,
+// embed) and never a concept the mechanism layers know about. Fails when the
+// word appears in a code token (comments stripped) outside the allowlist.
+// The word is assembled from two fragments so this test does not match itself.
+func TestCoordinatorStaysAtTheFrontDoor(t *testing.T) {
 	requireGitWorkTree(t)
 	banned := "coordin" + "ator"
+
+	// The front door: where the concept is allowed to live, and nowhere else.
+	frontDoor := map[string]bool{
+		"cmd/ax/main.go":                   true, // verb dispatch + usage text
+		"internal/app/coordinate.go":       true, // the verb implementation
+		"internal/app/coordinate_test.go":  true,
+		"internal/app/compose.go":          true, // the picker's compose mode
+		"internal/app/compose_test.go":     true,
+		"internal/finder/picker.go":        true, // first-run empty-state hint
+		"internal/finder/discover_test.go": true,
+		"internal/view/help.go":            true, // help screen footer
+		"behaviors/embed.go":               true, // the embedded behavior text
+	}
 
 	root := repoRoot(t)
 	cmd := exec.Command("git", "ls-files", "*.go")
@@ -63,7 +72,7 @@ func TestCoreIsCoordinatorFree(t *testing.T) {
 	var offenders []string
 	for _, line := range bytes.Split(bytes.TrimSpace(out), []byte("\n")) {
 		p := string(line)
-		if p == "" || p == self || strings.HasPrefix(p, "recipes/") {
+		if p == "" || p == self || strings.HasPrefix(p, "recipes/") || frontDoor[p] {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(root, p))
@@ -76,7 +85,7 @@ func TestCoreIsCoordinatorFree(t *testing.T) {
 	}
 
 	if len(offenders) > 0 {
-		t.Errorf("core Go code identifiers must be %s-free (the coordinator is a recipe, not core); found the banned word in a code token in:\n  %s",
+		t.Errorf("the %s concept must stay at the front door (verb/compose/help/embed), never in the mechanism layers; found the word in a code token in:\n  %s",
 			banned, strings.Join(offenders, "\n  "))
 	}
 }

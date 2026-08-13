@@ -48,11 +48,8 @@ func ResolveAlias(id string) string {
 // RemoveAlias deletes a launch id's forwarding pointer (best-effort teardown).
 func RemoveAlias(id string) { os.Remove(filepath.Join(aliasDir(), id)) }
 
-// ResolveAliasPrefix resolves a short unambiguous prefix of a launch id to its
-// adopted session id. The picker and human-facing output shorten ids, and the
-// placeholder session a short launch id would prefix-match against is removed
-// at adoption — so without this, the full launch id keeps working (via
-// ResolveAlias) while its short form dangles.
+// ResolveAliasPrefix resolves a short unambiguous launch-id prefix to its
+// adopted session id (the placeholder a prefix would match is gone post-adoption).
 func ResolveAliasPrefix(id string) (string, bool) {
 	if id == "" {
 		return "", false
@@ -81,9 +78,7 @@ func ResolveAliasPrefix(id string) (string, bool) {
 	return "", false
 }
 
-// Aliases returns every launch-id -> session-id forwarding pointer, for views
-// that need the reverse join (e.g. `ax list --json` stamping each adopted
-// session with the id its launch printed).
+// Aliases returns every launch-id -> session-id forwarding pointer.
 func Aliases() map[string]string {
 	entries, err := os.ReadDir(aliasDir())
 	if err != nil {

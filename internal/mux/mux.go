@@ -191,9 +191,7 @@ func prefixName(name string) string {
 // none is the no-multiplexer backend: it reports inactive and every operation is
 // a no-op. It is the honest answer when ax runs outside any multiplexer and the
 // user has not opted into a real process backend (that is a separate build).
-// Send/Interrupt are the exception to the no-op rule: input that cannot be
-// delivered must FAIL, not vanish — a coordinator steering a worker through
-// `ax send` must never read a dropped message as delivered.
+// Send/Interrupt are the exception: undeliverable input must fail, not vanish.
 type none struct{}
 
 func (none) Active() bool                            { return false }
@@ -388,12 +386,8 @@ func (tmux) Locate(sessionID string) (string, bool) {
 	return w, ok
 }
 
-// locatePane is Locate plus the pane's current foreground command, so an input
-// path (Send/Interrupt) can tell a live harness pane from one that fell back to
-// a shell. The fallback match requires the pane's foreground NOT to be an
-// interactive shell: a pane whose start command embeds the id but whose harness
-// exited to a shell must never be an input target (typed text would be EXECUTED
-// as shell commands), though it stays fine as a window handle for focus/close.
+// locatePane is Locate plus the pane's foreground command; the fallback skips
+// shell-foreground panes because typed input into a shell EXECUTES as commands.
 func locatePane(sessionID string) (window, curCmd string, ok bool) {
 	if sessionID == "" {
 		return "", "", false
@@ -600,9 +594,7 @@ func (t tmux) Send(sessionID, text string, enter bool) error {
 	if !ok {
 		return fmt.Errorf("session %q not open in tmux", sessionID)
 	}
-	// Typed text lands in whatever process is in the pane's foreground. If the
-	// harness died and a shell took over, the paste would EXECUTE the message
-	// as shell commands (and the session never sees it) — refuse instead.
+	// A shell foreground would EXECUTE the pasted text as commands; refuse.
 	if isInteractiveShell(cur) {
 		return fmt.Errorf("session %q: pane foreground is a shell (%s), not the harness; refusing to type into it — the text would run as shell commands", sessionID, cur)
 	}
@@ -629,8 +621,7 @@ func (t tmux) Send(sessionID, text string, enter bool) error {
 	return nil
 }
 
-// Interrupt sends ctrl-c into the window running sessionID. Same input guard as
-// Send: a ctrl-c into a leftover shell is not an interrupt of the session.
+// Interrupt sends ctrl-c into the window running sessionID (same shell-foreground guard as Send).
 func (t tmux) Interrupt(sessionID string) error {
 	w, cur, ok := locatePane(sessionID)
 	if !ok {

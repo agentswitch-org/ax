@@ -153,22 +153,27 @@ not on `PATH` by default.
 
 ## Quick start
 
-Start a project coordinator from the project root.
-
-macOS/Linux:
+Start a project coordinator from the project root:
 
 ```sh
-curl -fsSL https://agentswitch.org/coordinator.sh | sh
+ax coordinate "Ship the v2 importer. Done when: go test ./... passes and the README covers the new flow."
 ```
 
-Windows PowerShell:
+The coordinator behavior ships inside the binary; on first use it is written
+to `~/.config/ax/behaviors/coordinator.md`, where your edits win on every
+later run. The coordinator triages the goal into `.coordinator/backlog.md`,
+delegates the work to tracked worker sessions, verifies their results, and
+keeps itself moving (`--self-propel`) until the goal's done criteria pass or
+it genuinely needs you. `--harness` picks the harness (default:
+`default_harness`, else claude); any launch flag overrides the defaults
+(`ax coordinate --help` lists them).
 
-```powershell
-irm https://agentswitch.org/coordinator.ps1 | iex
+For a customized bootstrap, the copy-and-own recipe still works:
+
+```sh
+curl -fsSL https://agentswitch.org/coordinator.sh | sh   # macOS/Linux
+irm https://agentswitch.org/coordinator.ps1 | iex        # Windows PowerShell
 ```
-
-The helper refreshes the coordinator behavior and recipe under `~/.config/ax`,
-then launches the recipe in the current directory.
 
 ## Common commands
 
@@ -178,6 +183,8 @@ ax new [harness [flags]] start a new session
 ax claude "fix the flaky test"    run a task, tracked in a background window
 ax codex "add a CHANGELOG entry"  same, with codex
 ax "fix the flaky test"           same, when default_harness is set in config
+ax coordinate "ship the importer" run a whole project: a self-propelled
+                                  coordinator that delegates to workers
 ```
 
 For multi-line prompts, pass `--task-file <path>` instead of shell-quoting a
@@ -253,7 +260,7 @@ The shell verbs let one session drive others: launch workers, read turns, send
 messages, wait for completion, run an accept check, and stop a run. Fences on
 cost, fan-out, depth, and time apply across the run.
 
-ax ships no installed recipes, behaviors, coordinator prompt, or presets. The `recipes/` and `behaviors/` directories in this repo are source files to copy from. When `behaviors_dir` and `recipes_dir` are unset, they default to `behaviors` and `recipes` sibling directories next to your config file, so files dropped there are picked up with no config edit. Set either to point at your own path to override the default. Then use the compose chooser (`c`, `C`, or `ctrl-n`) to launch a plain session, a behavior-backed prompt, or a recipe script.
+The coordinator behavior ships inside the binary (`ax coordinate` writes it to `behaviors_dir` on first use, and your edited copy wins). Everything else stays userland: the `recipes/` and `behaviors/` directories in this repo are source files to copy from. When `behaviors_dir` and `recipes_dir` are unset, they default to `behaviors` and `recipes` sibling directories next to your config file, so files dropped there are picked up with no config edit. Set either to point at your own path to override the default. Then use the compose chooser (`c`, `C`, or `ctrl-n`) to launch a plain session, a behavior-backed prompt, a coordinator, or a recipe script.
 
 ## Supported platforms
 
@@ -282,12 +289,12 @@ The picker opens in normal mode. Press `?` for the full key map.
 - `t` cycle scope (all/live/working/active-run), `A` cycle archive visibility (unarchived/all/archived), `m` filter by machine, `f` filter by run, `b` cycle group-by pivot
 - `T` toggle the run tree view, `H`/`L` pick a sort column, `s` sort (again to flip)
 - `Enter` open or resume (jumps to its window if already open), `e`/`E` resume without/with the harness's flags
-- `c`/`C`/`ctrl-n` open the compose chooser (harness, then a mode of plain / behavior+prompt / recipe, then a directory), `x` kill
+- `c`/`C`/`ctrl-n` open the compose chooser (harness, then a mode of plain / behavior+prompt / coordinator / recipe, then a directory), `x` kill
 - `r` reply to a blocked `ax ask` question, `Tab` multi-select, `v` visual select
 - `l` tag the selection, `D` archive selected non-live rows or unarchive archived rows, `M` move windows into a named tmux session
 - `q` quit
 
-Inside an attached session, `ctrl-a` then `d` detaches (the screen chord): you return to the shell and the session keeps running (`ax attach <id>` to come back). `ctrl-a` then `a` detaches the same way but reopens the ax picker in the same terminal, so you can hop between sessions without a multiplexer. Only the prefix is intercepted: `ctrl-a` `ctrl-a` sends one literal `ctrl-a` to the harness, and `ctrl-a` followed by any other key passes both through. Rebind the prefix with `detach_prefix` (any `ctrl-<letter>`), the detach letter with `detach_key`, and the menu letter with `menu_key`; `ctrl-\` always works as a detach fallback.
+Inside an attached session, `ctrl-a` then `d` detaches (the screen chord): you return to the shell and the session keeps running (`ax attach <id>` to come back). `ctrl-a` then `a` detaches the same way but reopens the ax picker in the same terminal, so you can hop between sessions without a multiplexer. `ctrl-a` then `y` stops the harness and resumes this same session in the same window with the harness's permission-bypass flag added (claude's `--dangerously-skip-permissions`), for the forgot-to-skip-permissions moment; the CLI form is `ax attach <id> --yolo`. Only the prefix is intercepted: `ctrl-a` `ctrl-a` sends one literal `ctrl-a` to the harness, and `ctrl-a` followed by any other key passes both through. Rebind the prefix with `detach_prefix` (any `ctrl-<letter>`), the detach letter with `detach_key`, the menu letter with `menu_key`, and the relaunch letter with `relaunch_key`; `ctrl-\` always works as a detach fallback.
 
 Any key can be rebound under `[keys]` in the config. The help screen and hint row always show the keys you set.
 

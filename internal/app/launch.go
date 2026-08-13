@@ -101,10 +101,11 @@ type launchOpts struct {
 	effort  string   // reasoning effort level (low, medium, high, xhigh, max, ...)
 	host    string   // --host NAME: rerun this launch on the named host, id host-qualified
 	hflags  []string // after `--`
-	// self-propel: the outer loop that re-invokes an idle inline (pi/codex)
-	// coordinator until the project is done, waiting on a human, or capped. Opt-in
-	// via --self-propel; meaningless (and refused) for a harness that sustains its
-	// own agent loop (claude). See internal/propel.
+	// self-propel: the outer loop that re-invokes a session whose turn ended
+	// with its task unfinished, until the project is done, waiting on a human,
+	// or capped. Opt-in via --self-propel. pi/codex pump on their transcript's
+	// turn end; claude pumps on its Stop hook's terminal marker; a harness with
+	// neither signal (opencode) refuses the flag. See internal/propel.
 	selfPropel    bool
 	propelPrompt  string        // --propel-prompt: the continue-prompt injected each idle turn
 	propelDone    string        // --propel-until / --done-check: shell cmd, exit 0 => project complete
@@ -341,14 +342,12 @@ func (a App) runLaunch(harness string, o launchOpts, ctx launchCtx) {
 		os.Exit(2)
 	}
 
-	// Self-propel is the outer loop for an inline harness that does one burst per
-	// turn and then stops (pi, codex). A harness that sustains its own agent loop
-	// (claude) needs no pump, so refuse the flag for it rather than persist a
-	// no-op. A propelled coordinator must also stay live across turns, so it
-	// implies --keep-live (a self-reaping worker would defeat the loop).
+	// Self-propel needs a turn-end signal to pump on (pi/codex: transcript;
+	// claude: Stop-hook marker); refuse the rest rather than persist a no-op.
+	// Implies --keep-live: a self-reaping worker would defeat the loop.
 	if o.selfPropel {
-		if h.Format != "pi" && h.Format != "codex" {
-			fmt.Fprintf(os.Stderr, "ax: --self-propel is only supported for inline harnesses (pi, codex); ignoring it for %q\n", harness)
+		if !selfPropelSupported(h.Format) {
+			fmt.Fprintf(os.Stderr, "ax: --self-propel is not supported for %q (no turn-end signal to pump on); ignoring it\n", harness)
 			o.selfPropel = false
 		} else {
 			o.keepLive = true

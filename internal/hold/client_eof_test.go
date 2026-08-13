@@ -94,7 +94,7 @@ func startAttachOnPipe(t *testing.T, id string) (*os.File, *os.File, <-chan atta
 	os.Stdin = stdin
 	done := make(chan attachResult, 1)
 	go func() {
-		code, err := Attach(id, nil, nil)
+		code, err := Attach(id, nil, nil, nil)
 		done <- attachResult{code: code, err: err}
 	}()
 	return stdin, input, done

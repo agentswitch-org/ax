@@ -185,6 +185,14 @@
 # letter.
 # menu_key = "a"
 
+# Relaunch chord inside an attached session: the same prefix, then the
+# relaunch letter (y by default, "yolo"), stops the harness and resumes this
+# same session in this same window with the harness's permission-bypass flag
+# added (claude's --dangerously-skip-permissions) — for the "forgot to skip
+# permissions" moment, no typing needed. Same as `ax attach <id> --yolo`.
+# Shares detach_prefix; the letter is a bare letter.
+# relaunch_key = "y"
+
 # Window name prefix stamped on every ax-managed window/session/tab in tmux or
 # zellij, so ax windows are visually distinct and bulk-selectable. Default "ax:".
 # "off" disables prefixing entirely.

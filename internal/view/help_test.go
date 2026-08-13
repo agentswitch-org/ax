@@ -114,11 +114,11 @@ func TestHelpKeyColumnAligned(t *testing.T) {
 // the terminal is too narrow to hold it.
 func TestHelpNarrowDropsBanner(t *testing.T) {
 	km := keys.Build(nil)
-	narrow := StripANSI(Help(km, "Ctrl-A then D", 60, 70))
+	narrow := StripANSI(Help(km, "Ctrl-A then D", 70, 70))
 	if strings.Contains(narrow, "agentswitch  ·  v") {
 		t.Error("banner subtitle should be dropped on a narrow terminal")
 	}
-	wide := StripANSI(Help(km, "Ctrl-A then D", 60, 200))
+	wide := StripANSI(Help(km, "Ctrl-A then D", 70, 200))
 	if !strings.Contains(wide, "agentswitch  ·  v") {
 		t.Error("banner subtitle should be present on a wide terminal")
 	}

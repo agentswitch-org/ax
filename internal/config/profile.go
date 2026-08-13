@@ -52,6 +52,7 @@ type Profile struct {
 	DetachPrefix   string                `toml:"detach_prefix,omitempty"`
 	DetachKey      string                `toml:"detach_key,omitempty"`
 	MenuKey        string                `toml:"menu_key,omitempty"`
+	RelaunchKey    string                `toml:"relaunch_key,omitempty"`
 	MuxPrefix      string                `toml:"mux_prefix,omitempty"`
 	MuxGroup       string                `toml:"mux_group,omitempty"`
 	DefaultHarness string                `toml:"default_harness,omitempty"`
@@ -92,6 +93,7 @@ func (c Config) Profile() Profile {
 		DetachPrefix:   c.DetachPrefix,
 		DetachKey:      c.DetachKey,
 		MenuKey:        c.MenuKey,
+		RelaunchKey:    c.RelaunchKey,
 		MuxPrefix:      c.MuxPrefix,
 		MuxGroup:       c.MuxGroup,
 		DefaultHarness: c.DefaultHarness,
@@ -237,6 +239,7 @@ func LintProfile(p Profile) error {
 		{"detach_prefix", p.DetachPrefix},
 		{"detach_key", p.DetachKey},
 		{"menu_key", p.MenuKey},
+		{"relaunch_key", p.RelaunchKey},
 		{"mux_prefix", p.MuxPrefix},
 		{"mux_group", p.MuxGroup},
 		{"default_harness", p.DefaultHarness},
@@ -307,6 +310,7 @@ func DiffProfile(cur, inc Profile) []string {
 		{"detach_prefix", cur.DetachPrefix, inc.DetachPrefix},
 		{"detach_key", cur.DetachKey, inc.DetachKey},
 		{"menu_key", cur.MenuKey, inc.MenuKey},
+		{"relaunch_key", cur.RelaunchKey, inc.RelaunchKey},
 		{"mux_prefix", cur.MuxPrefix, inc.MuxPrefix},
 		{"mux_group", cur.MuxGroup, inc.MuxGroup},
 		{"default_harness", cur.DefaultHarness, inc.DefaultHarness},

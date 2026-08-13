@@ -13,7 +13,7 @@ import (
 // lossless, and the ctrl-\ fallback detaches anywhere. Bytes after a chord in
 // the same read are dropped.
 func TestScanChord(t *testing.T) {
-	const pfx, cmd, menu = 0x01, 'd', 'a'
+	const pfx, cmd, menu, rel = 0x01, 'd', 'a', 'y'
 	cases := []struct {
 		name    string
 		in      []byte
@@ -40,7 +40,7 @@ func TestScanChord(t *testing.T) {
 		{"fallback while armed detaches", []byte{pfx, 0x1c}, nil, chordDetach, false},
 	}
 	for _, c := range cases {
-		fwd, act, pending := scanChord(c.in, pfx, cmd, menu, false)
+		fwd, act, pending := scanChord(c.in, pfx, cmd, menu, rel, false)
 		if !bytes.Equal(fwd, c.fwd) || act != c.act || pending != c.pending {
 			t.Errorf("%s: scanChord(%q) = (%q, %v, %v); want (%q, %v, %v)",
 				c.name, c.in, fwd, act, pending, c.fwd, c.act, c.pending)
@@ -52,22 +52,44 @@ func TestScanChord(t *testing.T) {
 // the letter (detach) or the menu letter (picker) starting the next, doubles
 // into a literal, or releases as prefix-plus-byte.
 func TestScanChordAcrossReads(t *testing.T) {
-	const pfx, cmd, menu = 0x01, 'd', 'a'
+	const pfx, cmd, menu, rel = 0x01, 'd', 'a', 'y'
 
-	fwd, act, pending := scanChord([]byte{cmd}, pfx, cmd, menu, true)
+	fwd, act, pending := scanChord([]byte{cmd}, pfx, cmd, menu, rel, true)
 	if fwd != nil || act != chordDetach || pending {
 		t.Errorf("armed then letter = (%q, %v, %v); want (nil, detach, false)", fwd, act, pending)
 	}
-	fwd, act, pending = scanChord([]byte{menu}, pfx, cmd, menu, true)
+	fwd, act, pending = scanChord([]byte{menu}, pfx, cmd, menu, rel, true)
 	if fwd != nil || act != chordMenu || pending {
 		t.Errorf("armed then menu letter = (%q, %v, %v); want (nil, menu, false)", fwd, act, pending)
 	}
-	fwd, act, pending = scanChord([]byte{pfx}, pfx, cmd, menu, true)
+	fwd, act, pending = scanChord([]byte{pfx}, pfx, cmd, menu, rel, true)
 	if !bytes.Equal(fwd, []byte{pfx}) || act != chordNone || pending {
 		t.Errorf("armed then prefix = (%q, %v, %v); want (one literal prefix, none, false)", fwd, act, pending)
 	}
-	fwd, act, pending = scanChord([]byte{'x'}, pfx, cmd, menu, true)
+	fwd, act, pending = scanChord([]byte{'x'}, pfx, cmd, menu, rel, true)
 	if !bytes.Equal(fwd, []byte{pfx, 'x'}) || act != chordNone || pending {
 		t.Errorf("armed then other = (%q, %v, %v); want (prefix+x, none, false)", fwd, act, pending)
+	}
+}
+
+// The relaunch chord (prefix then y by default) resolves like the menu chord:
+// detach-shaped teardown with a distinct action, armed state included, and the
+// bare letter stays a plain byte.
+func TestScanChordRelaunch(t *testing.T) {
+	const pfx, cmd, menu, rel = 0x01, 'd', 'a', 'y'
+	fwd, act, pending := scanChord([]byte{pfx, rel}, pfx, cmd, menu, rel, false)
+	if fwd != nil || act != chordRelaunch || pending {
+		t.Errorf("prefix-relaunch = (%q, %v, %v); want (nil, relaunch, false)", fwd, act, pending)
+	}
+	fwd, act, pending = scanChord([]byte{rel}, pfx, cmd, menu, rel, true)
+	if fwd != nil || act != chordRelaunch || pending {
+		t.Errorf("armed then relaunch letter = (%q, %v, %v); want (nil, relaunch, false)", fwd, act, pending)
+	}
+	if fwd, act, _ := scanChord([]byte{rel}, pfx, cmd, menu, rel, false); !bytes.Equal(fwd, []byte{rel}) || act != chordNone {
+		t.Errorf("bare relaunch letter = (%q, %v); want plain byte", fwd, act)
+	}
+	// A collision with the detach letter degrades to a plain detach.
+	if _, act, _ := scanChord([]byte{pfx, 'd'}, pfx, 'd', menu, 'd', false); act != chordDetach {
+		t.Errorf("colliding relaunch letter = %v; want detach to win", act)
 	}
 }

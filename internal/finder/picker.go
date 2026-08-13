@@ -1732,7 +1732,7 @@ func (p *picker) listHeight() int {
 	}
 	h := p.sc.rows
 	ph := p.previewHeight()
-	lh := h - 2 /*navbar,header*/ - 1 /*prompt*/ - 1 /*sep*/ - ph
+	lh := h - 2 /*navbar,header*/ - 2 /*prompt + second hint row*/ - 1 /*sep*/ - ph
 	if lh < 1 {
 		lh = 1
 	}
@@ -1758,14 +1758,18 @@ func (p *picker) frameLines() []string {
 
 	L = append(L, fit(view.Navbar(p.modeName(), p.metrics(), p.scope.name(), p.statusSegment(), w), w))
 	L = append(L, fit("  "+view.Columns(p.cfg, p.selCol, p.sortCol, p.sortDesc), w))
+	empty := p.emptyStateLines()
 	for r := 0; r < lh; r++ {
 		mi := p.top + r
 		if mi >= len(p.matches) {
-			if r == 0 && p.loading {
+			switch {
+			case r == 0 && p.loading:
 				L = append(L, fit("  "+ansi("2", loadSpinner[p.frame%len(loadSpinner)]+" loading sessions…"), w))
-			} else if r == 0 && p.notice != "" {
+			case r == 0 && p.notice != "":
 				L = append(L, fit("  "+p.notice, w))
-			} else {
+			case len(empty) > 0 && r >= 1 && r-1 < len(empty):
+				L = append(L, fit(empty[r-1], w))
+			default:
 				L = append(L, "")
 			}
 			continue
@@ -1773,6 +1777,7 @@ func (p *picker) frameLines() []string {
 		L = append(L, p.rowLine(mi, w))
 	}
 	L = append(L, fit(p.promptLine(), w))
+	L = append(L, fit(p.hintLine2(), w))
 	L = append(L, ansi("90", strings.Repeat("─", w)))
 	for r := 0; r < ph-1; r++ {
 		idx := p.previewTop + r
@@ -1784,6 +1789,32 @@ func (p *picker) frameLines() []string {
 	}
 	L = append(L, fit(p.footerLine(), w))
 	return L
+}
+
+// emptyStateLines is the first-run hero shown when no sessions exist at all
+// (filter-hidden emptiness is fallbackWhenFiltersHideAll's notice, not this).
+func (p *picker) emptyStateLines() []string {
+	if len(p.all) > 0 || p.loading {
+		return nil
+	}
+	newKey := p.km.Key(keys.Compose)
+	if newKey == "" {
+		newKey = "c"
+	}
+	helpKey := p.km.Key(keys.Help)
+	if helpKey == "" {
+		helpKey = "?"
+	}
+	key := func(k string) string { return ansi("1;36", k) }
+	return []string{
+		"  " + ansi("1", "no sessions yet — three ways to start:"),
+		"",
+		"    " + key(newKey) + ansi("2", "                        start a session here: pick a harness, mode, and folder"),
+		"    " + key(`ax claude "fix the tests"`) + ansi("2", "  from any shell: run a task in a tracked window"),
+		"    " + key(`ax coordinate "goal"`) + ansi("2", "       run a whole project: a self-propelled coordinator plus its workers"),
+		"",
+		"  " + ansi("2", "sessions you start (and past claude/pi/codex sessions on this machine) appear here; "+helpKey+" lists every key"),
+	}
 }
 
 // footerLine is the status line under the transcript preview: the selected
@@ -1901,7 +1932,7 @@ func (p *picker) promptLine() string {
 	}
 	// All status (mode, machine/group filter, tree, active, metrics) lives in the
 	// navbar; the bottom row is only the key hint, never polluted with state.
-	return "  " + ansi("2", p.hintLine())
+	return "  " + p.hintLine() // self-styled: no outer dim wrap
 }
 
 // statusSegment is the header's filter/mode status: the machine filter, the active
@@ -1970,30 +2001,55 @@ func (p *picker) attentionCount() int {
 	return n
 }
 
-// hintLine builds the normal-mode key hint from the live keymap, so it always
-// shows the keys actually in effect.
+// hintKey renders one key hint; hot marks the load-bearing ones bright.
+func hintKey(key, label string, hot bool) string {
+	if hot {
+		return ansi("1", key) + ansi("2", " "+label)
+	}
+	return ansi("2", key+" "+label)
+}
+
+func joinHints(parts []string) string { return strings.Join(parts, ansi("2", " · ")) }
+
+// hintLine is the first hint row (actions on sessions), built from the live
+// keymap so it always shows the keys actually in effect.
 func (p *picker) hintLine() string {
-	// The daily set only; everything else lives under `?`. A 13-item hint row
-	// is a wall, not a hint.
+	return joinHints([]string{
+		hintKey("enter", "resume", true),
+		hintKey(p.km.Key(keys.Compose), "new session", true),
+		hintKey(p.km.Key(keys.Kill), "kill", false),
+		hintKey(p.km.Key(keys.ToggleArchived), "archive", false),
+		hintKey(p.km.Key(keys.Label), "tag", false),
+		hintKey(p.km.Key(keys.DetachWin), "close window", false),
+		hintKey(p.km.Key(keys.OpenWin), "open window", false),
+		hintKey(strings.ToLower(hold.DetachLabel(p.cfg.DetachPrefix, p.cfg.DetachKey)), "detach (inside a session)", false),
+	})
+}
+
+// hintLine2 is the second hint row: mode help while typing, else the
+// finding/viewing keys.
+func (p *picker) hintLine2() string {
+	switch p.mode {
+	case mFilter:
+		return "  " + ansi("2", "type to narrow the list · enter keeps the filter · esc clears it")
+	case mContent:
+		return "  " + ansi("2", "type a phrase · enter searches every transcript · esc cancels")
+	}
 	parts := []string{
-		p.km.Key(keys.Down) + "/" + p.km.Key(keys.Up) + " move",
-		p.km.Key(keys.Filter) + " filter",
-		p.km.Key(keys.Search) + " search",
-		p.km.Key(keys.Jump) + " jump",
-		p.km.Key(keys.Visual) + " select",
-		p.km.Key(keys.Label) + " tag",
-		p.km.Key(keys.GroupBy) + " by",
-		p.km.Key(keys.Kill) + " kill",
-		p.km.Key(keys.DetachWin) + "/" + p.km.Key(keys.OpenWin) + " win",
-		p.km.Key(keys.Scope) + " scope",
-		p.km.Key(keys.Archive) + " view/" + p.km.Key(keys.ToggleArchived) + " archive",
-		strings.ToLower(hold.DetachLabel(p.cfg.DetachPrefix, p.cfg.DetachKey)) + " detach",
-		p.km.Key(keys.Help) + " more",
+		hintKey(p.km.Key(keys.Down)+"/"+p.km.Key(keys.Up), "move", false),
+		hintKey(p.km.Key(keys.Search), "search text", false),
+		hintKey(p.km.Key(keys.Filter), "filter rows", false),
+		hintKey(p.km.Key(keys.Jump), "quick-switch", false),
+		hintKey(p.km.Key(keys.Visual), "multi-select", false),
+		hintKey(p.km.Key(keys.Scope), "scope", false),
+		hintKey(p.km.Key(keys.Archive), "show archived", false),
+		hintKey(p.km.Key(keys.GroupBy), "group", false),
 	}
 	if len(p.cfg.Binds) > 0 { // only worth a hint once the user has configured one
-		parts = append(parts, p.km.Key(keys.Bind)+" bind")
+		parts = append(parts, hintKey(p.km.Key(keys.Bind), "custom binds", false))
 	}
-	return strings.Join(parts, " · ")
+	parts = append(parts, hintKey(p.km.Key(keys.Help), "all keys", true))
+	return "  " + joinHints(parts)
 }
 
 func (p *picker) modeName() string {

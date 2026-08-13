@@ -266,6 +266,11 @@ type Config struct {
 	// same terminal, so you can hop between sessions without a multiplexer. It
 	// shares detach_prefix. See internal/hold.
 	MenuKey string `toml:"menu_key"`
+	// RelaunchKey rebinds the relaunch chord's command letter ("y" by default:
+	// ctrl-a then y stops the attached harness and resumes the same session
+	// with its permission-bypass flag added, same as `ax attach <id> --yolo`).
+	// Shares detach_prefix. See internal/hold.
+	RelaunchKey string `toml:"relaunch_key"`
 	// Metrics gates the Prometheus textfile export written at run conclusion.
 	Metrics Metrics `toml:"metrics"`
 	// Retention is machine-local lifecycle cleanup policy. It is deliberately
@@ -628,6 +633,7 @@ func Load() (Config, error) {
 	cfg.DetachPrefix = user.DetachPrefix // attach-client detach chord prefix rebind, user-defined
 	cfg.DetachKey = user.DetachKey       // attach-client detach chord letter rebind, user-defined
 	cfg.MenuKey = user.MenuKey           // attach-client menu chord letter rebind, user-defined
+	cfg.RelaunchKey = user.RelaunchKey   // attach-client yolo-relaunch chord letter rebind, user-defined
 	cfg.Metrics = user.Metrics           // Prometheus textfile export gate, user-defined
 	if userRetention.Retention.AutoRetire != nil {
 		cfg.Retention.AutoRetire = *userRetention.Retention.AutoRetire

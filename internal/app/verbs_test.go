@@ -303,3 +303,21 @@ func TestCascadeKillOrdersRecipeRootLast(t *testing.T) {
 		t.Fatalf("kill order = %#v, want %#v", got, want)
 	}
 }
+
+// --yolo appends the harness's permission-bypass flag to the resume args
+// exactly once, respects an explicit --args base, and degrades with a notice
+// for a harness with no bypass flag.
+func TestYoloOverride(t *testing.T) {
+	claude := config.Harness{Name: "claude", Args: "--verbose", SkipPermissions: "--dangerously-skip-permissions"}
+	if got := *yoloOverride(claude, nil); got != "--verbose --dangerously-skip-permissions" {
+		t.Errorf("yoloOverride = %q", got)
+	}
+	already := "--dangerously-skip-permissions"
+	if got := *yoloOverride(claude, &already); got != already {
+		t.Errorf("yoloOverride must not duplicate the bypass, got %q", got)
+	}
+	pi := config.Harness{Name: "pi"}
+	if got := *yoloOverride(pi, nil); got != "" {
+		t.Errorf("yoloOverride without a bypass flag = %q, want the base args unchanged", got)
+	}
+}
