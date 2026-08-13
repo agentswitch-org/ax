@@ -118,18 +118,61 @@ brew upgrade --cask agentswitch-org/ax/ax
 
 ### Release candidates
 
-Release candidates use tags such as `v0.1.1-rc.1`. They publish GitHub
-prerelease assets and a separate Homebrew cask:
+Release candidates use tags such as `v0.1.3-rc.1`. They publish as GitHub
+prereleases, which the "latest release" pages and APIs skip, so an installer
+that resolves "latest" hands you the previous stable version instead.
+
+The blocks below are copy-paste with no editing: they resolve the newest
+release (including prereleases) themselves, and they only touch github.com,
+so they work on networks where agentswitch.org is blocked.
+
+macOS, Linux, and WSL (installs to `~/.local/bin`, no sudo):
+
+```sh
+set -eu
+tag=$(curl -fsSL https://api.github.com/repos/agentswitch-org/ax/releases |
+  sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; esac
+curl -fL -o /tmp/ax.tar.gz \
+  "https://github.com/agentswitch-org/ax/releases/download/$tag/ax_${tag#v}_${os}_${arch}.tar.gz"
+tar -xzf /tmp/ax.tar.gz -C /tmp ax
+/tmp/ax version
+mkdir -p ~/.local/bin && install -m 0755 /tmp/ax ~/.local/bin/ax
+```
+
+Debian, Ubuntu, and WSL via the `.deb` instead:
+
+```sh
+set -eu
+tag=$(curl -fsSL https://api.github.com/repos/agentswitch-org/ax/releases |
+  sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
+arch=$(dpkg --print-architecture)
+curl -fL -o /tmp/ax.deb \
+  "https://github.com/agentswitch-org/ax/releases/download/$tag/ax_${tag#v}_linux_${arch}.deb"
+sudo apt install /tmp/ax.deb
+ax version
+```
+
+Windows PowerShell:
+
+```powershell
+$tag = (irm https://api.github.com/repos/agentswitch-org/ax/releases)[0].tag_name
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
+irm "https://github.com/agentswitch-org/ax/releases/download/$tag/ax_$($tag.TrimStart('v'))_windows_$arch.zip" -OutFile "$env:TEMP\ax.zip"
+Expand-Archive "$env:TEMP\ax.zip" -DestinationPath "$env:LOCALAPPDATA\ax\bin" -Force
+& "$env:LOCALAPPDATA\ax\bin\ax.exe" version
+```
+
+Where agentswitch.org is reachable, the shorter forms still work (pin any tag):
 
 ```sh
 brew install --cask agentswitch-org/ax/ax-rc
-curl -fsSL https://agentswitch.org/install.sh | AX_RELEASE_TAG=v0.1.1-rc.1 sh
+curl -fsSL https://agentswitch.org/install.sh | AX_RELEASE_TAG=v0.1.3-rc.1 sh
 ```
 
-On Windows:
-
 ```powershell
-$env:AX_RELEASE_TAG = 'v0.1.1-rc.1'; irm https://agentswitch.org/install.ps1 | iex
+$env:AX_RELEASE_TAG = 'v0.1.3-rc.1'; irm https://agentswitch.org/install.ps1 | iex
 ```
 
 ### Developer installs
