@@ -13,7 +13,7 @@ import (
 func TestProfileExtractsPortableFieldsOnly(t *testing.T) {
 	c := Config{
 		Harnesses: []Harness{{
-			Name: "claude", Glob: "/local/*.jsonl", DB: "~/x.db",
+			Name: "claude", Glob: StringList{"/local/*.jsonl"}, DB: StringList{"~/x.db"},
 			Launch: "L", Args: "A", Format: "claude", SkipPermissions: "S",
 		}},
 		Columns:        []string{"host", "harness"},
@@ -157,7 +157,7 @@ launch = "old-launch {task}"
 	if claude.Launch != "new-launch {task}" || claude.Args != "--sender-args" {
 		t.Fatalf("template not overwritten: launch=%q args=%q", claude.Launch, claude.Args)
 	}
-	if claude.Glob != "/custom/local/*.jsonl" || claude.DB != "~/recv.db" {
+	if len(claude.Glob) != 1 || claude.Glob[0] != "/custom/local/*.jsonl" || len(claude.DB) != 1 || claude.DB[0] != "~/recv.db" {
 		t.Fatalf("local glob/db not preserved: glob=%q db=%q", claude.Glob, claude.DB)
 	}
 }
@@ -208,7 +208,7 @@ skip_permissions = ""
 	if custom.Format != "new-format" || custom.Launch != "new-launch" {
 		t.Fatalf("non-empty profile fields not applied: format=%q launch=%q", custom.Format, custom.Launch)
 	}
-	if custom.Glob != "/custom/*.jsonl" || custom.DB != "~/custom.db" {
+	if len(custom.Glob) != 1 || custom.Glob[0] != "/custom/*.jsonl" || len(custom.DB) != 1 || custom.DB[0] != "~/custom.db" {
 		t.Fatalf("local glob/db not preserved: glob=%q db=%q", custom.Glob, custom.DB)
 	}
 	if diff := DiffProfile(got.Profile(), inc); len(diff) != 0 {

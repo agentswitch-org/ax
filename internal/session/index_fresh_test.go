@@ -38,7 +38,7 @@ func TestIndexReflectsChanges(t *testing.T) {
 	}
 
 	cfg := config.Config{Harnesses: []config.Harness{{
-		Name: "claude", Glob: filepath.Join(root, "projects", "*", "*.jsonl"),
+		Name: "claude", Glob: config.StringList{filepath.Join(root, "projects", "*", "*.jsonl")},
 		IDRe: `/(?P<id>[^/]+)\.jsonl$`, Format: "claude",
 	}}}
 

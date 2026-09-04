@@ -12,7 +12,7 @@ import (
 func claudeStore(t *testing.T) (config.Harness, string) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "projects")
-	return config.Harness{Name: "claude", Format: "claude", Glob: filepath.Join(root, "*", "*.jsonl")}, root
+	return config.Harness{Name: "claude", Format: "claude", Glob: config.StringList{filepath.Join(root, "*", "*.jsonl")}}, root
 }
 
 // A session stranded in the project folder of its old (pre-move) directory is
@@ -85,7 +85,7 @@ func TestRelocateRefusesOverlongPath(t *testing.T) {
 
 // Non-claude harnesses resolve sessions globally; Relocate must not touch them.
 func TestRelocateIgnoresGlobalStores(t *testing.T) {
-	h := config.Harness{Name: "pi", Format: "pi", Glob: "~/.pi/agent/sessions/*/*.jsonl"}
+	h := config.Harness{Name: "pi", Format: "pi", Glob: config.StringList{"~/.pi/agent/sessions/*/*.jsonl"}}
 	if err := Relocate(h, Session{ID: "abc", File: "/nope/abc.jsonl", Dir: "/elsewhere"}); err != nil {
 		t.Fatal(err)
 	}

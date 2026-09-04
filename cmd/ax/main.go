@@ -1258,6 +1258,8 @@ func usage() {
                          profile while preserving its local settings
   ax config status [--host N | --all] [--json]
                          show remote ax/wire versions and profile drift
+  ax config stores       show every transcript store ax indexes per harness,
+                         with match counts (diagnose missing sessions, WSL)
   ax config rollback [--host N] [--yes]
                          restore the newest config backup locally or on a host
 

@@ -40,8 +40,8 @@ args = "--dangerously-skip-permissions"
 	if claude.Args != "--dangerously-skip-permissions" {
 		t.Fatalf("args = %q", claude.Args)
 	}
-	if claude.Glob == "" || claude.Resume == "" || !strings.Contains(claude.Launch, "{newid}") {
-		t.Fatalf("built-in fields lost: glob=%q resume=%q launch=%q", claude.Glob, claude.Resume, claude.Launch)
+	if len(claude.Glob) == 0 || claude.Resume == "" || !strings.Contains(claude.Launch, "{newid}") {
+		t.Fatalf("built-in fields lost: glob=%q resume=%q launch=%q", strings.Join(claude.Glob, ","), claude.Resume, claude.Launch)
 	}
 }
 
@@ -185,7 +185,7 @@ func TestCodexAndPiBuiltinTemplates(t *testing.T) {
 			t.Fatalf("pi template missing --approve project-trust bypass: %q", tmpl)
 		}
 	}
-	if pi.Glob != "~/.pi/agent/sessions/*/*.jsonl" {
+	if len(pi.Glob) != 1 || pi.Glob[0] != "~/.pi/agent/sessions/*/*.jsonl" {
 		t.Fatalf("pi glob drifted from the on-disk flat layout: %q", pi.Glob)
 	}
 	// The id-extracting regexes are load-bearing for indexing sessions off disk;
@@ -193,7 +193,7 @@ func TestCodexAndPiBuiltinTemplates(t *testing.T) {
 	if !strings.Contains(pi.IDRe, "?P<id>") {
 		t.Fatalf("pi IDRe lost its id capture group: %q", pi.IDRe)
 	}
-	if codex.Glob != "~/.codex/sessions/*/*/*/rollout-*.jsonl" || !strings.Contains(codex.IDRe, "?P<id>") {
+	if len(codex.Glob) != 1 || codex.Glob[0] != "~/.codex/sessions/*/*/*/rollout-*.jsonl" || !strings.Contains(codex.IDRe, "?P<id>") {
 		t.Fatalf("codex glob/IDRe drifted: glob=%q idre=%q", codex.Glob, codex.IDRe)
 	}
 	// claude stays a plain human path: no sandbox/approval/trust flags leak into
@@ -426,5 +426,44 @@ visible = false
 	}
 	if cfg.ColumnDefaults[1].Key != "tokens" || cfg.ColumnDefaults[1].Visible == nil || *cfg.ColumnDefaults[1].Visible {
 		t.Fatalf("second column default = %+v, want tokens/visible=false", cfg.ColumnDefaults[1])
+	}
+}
+
+// A list-valued glob and auto_stores=false decode through Load and resolve to
+// exactly the named stores (the *StringList pointer-decode path).
+func TestLoadGlobListAndAutoStores(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(`
+auto_stores = false
+[[harness]]
+name = "claude"
+glob = ["/one/*.jsonl", "/two/*.jsonl"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AX_CONFIG", path)
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // must be ignored: auto off
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AutoStoresOn() {
+		t.Fatal("auto_stores=false did not take")
+	}
+	var claude *Harness
+	for i := range cfg.Harnesses {
+		if cfg.Harnesses[i].Name == "claude" {
+			claude = &cfg.Harnesses[i]
+		}
+	}
+	if claude == nil {
+		t.Fatal("claude harness missing")
+	}
+	if len(claude.Glob) != 2 || claude.Glob[0] != "/one/*.jsonl" || claude.Glob[1] != "/two/*.jsonl" {
+		t.Fatalf("glob list not decoded: %#v", claude.Glob)
+	}
+	st := claude.EffectiveStores()
+	if len(st) != 2 || st[0].Glob != "/one/*.jsonl" || !st[0].Primary {
+		t.Fatalf("stores wrong (env leaked or list dropped): %+v", st)
 	}
 }

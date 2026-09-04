@@ -4,6 +4,26 @@ All notable changes to ax are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **Multiple transcript stores per harness.** `glob` (and opencode's `db`)
+  accept a list; the first entry is the primary store ax resumes from, the rest
+  are indexed too. With no explicit `glob`, ax resolves a built-in harness's
+  store from its relocation env var (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+  `PI_CODING_AGENT_DIR`, `XDG_DATA_HOME`) when set.
+- **WSL cross-boundary indexing.** Inside WSL, ax indexes the Windows-side
+  stores (`/mnt/c/Users/*/.claude`, ...), so sessions started through a Windows
+  CLI reached over interop are visible in the same list. Their harness cell
+  carries a dimmed `·win` badge, and a recorded Windows working directory is
+  translated to its mount path. A native-Windows ax discovers running distros'
+  stores the same way (`·wsl`). Disable with `auto_stores = false`.
+- **`ax config stores`**: a read-only view of every transcript store ax indexes
+  per harness, with match counts and newest age, plus a warning when a harness
+  binary resolves to the Windows install through WSL interop. Wire schema
+  bumped to v8 (additive: the foreign-store badge).
+
 ## 0.1.0 - 2026-07-10
 
 First public release.

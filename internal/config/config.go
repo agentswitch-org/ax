@@ -18,15 +18,26 @@ type Harness struct {
 	// Name is the short label shown in the picker (e.g. "claude", "pi").
 	Name string `toml:"name"`
 	// Glob matches every session transcript on disk. A leading ~ is expanded.
-	Glob string `toml:"glob"`
+	// One string or a list: the FIRST entry is the primary store, the one the
+	// local harness reads and writes and the one a resume is served from; every
+	// further entry is a secondary store ax also indexes (an old location, a
+	// second account, the other side of a WSL boundary). See Stores.
+	Glob StringList `toml:"glob"`
 	// IDRe is a regex over the full transcript path with a named capture
 	// group `id` that yields the session id used for resume.
 	IDRe string `toml:"id_regex"`
 	// Format selects the built-in parser ("claude", "pi", "codex", "opencode").
 	Format string `toml:"format"`
 	// DB is the SQLite database path for db-backed harnesses (opencode). A
-	// leading ~ is expanded. Ignored by file-glob harnesses.
-	DB string `toml:"db"`
+	// leading ~ is expanded. One string or a list, first = primary, like Glob.
+	// Ignored by file-glob harnesses.
+	DB StringList `toml:"db"`
+	// Stores is the resolved store list Load derives from Glob/DB, the harness
+	// env overrides (CLAUDE_CONFIG_DIR, CODEX_HOME, ...), and the auto-discovered
+	// stores across a WSL boundary. Stores[0] is the primary. Never read from
+	// TOML; EffectiveStores falls back to Glob/DB when it is empty (a hand-built
+	// Config in a test).
+	Stores []Store `toml:"-"`
 	// Resume is the command template run to continue a session. Placeholders:
 	// {id} {dir} {model} {args}. A " --model {model}" fragment is dropped when
 	// the model is unknown; the {args} slot is filled from Args (or a per-launch
@@ -81,21 +92,21 @@ type Harness struct {
 }
 
 type harnessOverride struct {
-	Name                string  `toml:"name"`
-	Glob                *string `toml:"glob"`
-	IDRe                *string `toml:"id_regex"`
-	Format              *string `toml:"format"`
-	DB                  *string `toml:"db"`
-	Resume              *string `toml:"resume"`
-	ResumeInput         *string `toml:"resume_input"`
-	ResumeInputHeadless *string `toml:"resume_input_headless"`
-	Launch              *string `toml:"launch"`
-	LaunchHeadless      *string `toml:"launch_headless"`
-	Args                *string `toml:"args"`
-	WaitingRe           *string `toml:"waiting_re"`
-	SkipPermissions     *string `toml:"skip_permissions"`
-	SandboxProfile      *string `toml:"sandbox_profile"`
-	EffortArg           *string `toml:"effort_arg"`
+	Name                string      `toml:"name"`
+	Glob                *StringList `toml:"glob"`
+	IDRe                *string     `toml:"id_regex"`
+	Format              *string     `toml:"format"`
+	DB                  *StringList `toml:"db"`
+	Resume              *string     `toml:"resume"`
+	ResumeInput         *string     `toml:"resume_input"`
+	ResumeInputHeadless *string     `toml:"resume_input_headless"`
+	Launch              *string     `toml:"launch"`
+	LaunchHeadless      *string     `toml:"launch_headless"`
+	Args                *string     `toml:"args"`
+	WaitingRe           *string     `toml:"waiting_re"`
+	SkipPermissions     *string     `toml:"skip_permissions"`
+	SandboxProfile      *string     `toml:"sandbox_profile"`
+	EffortArg           *string     `toml:"effort_arg"`
 }
 
 func (h harnessOverride) toHarness() Harness {
@@ -103,14 +114,18 @@ func (h harnessOverride) toHarness() Harness {
 }
 
 func applyHarnessOverride(base Harness, over harnessOverride) Harness {
+	if over.Glob != nil {
+		base.Glob = *over.Glob
+	}
+	if over.DB != nil {
+		base.DB = *over.DB
+	}
 	for _, f := range []struct {
 		dst *string
 		src *string
 	}{
-		{&base.Glob, over.Glob},
 		{&base.IDRe, over.IDRe},
 		{&base.Format, over.Format},
-		{&base.DB, over.DB},
 		{&base.Resume, over.Resume},
 		{&base.ResumeInput, over.ResumeInput},
 		{&base.ResumeInputHeadless, over.ResumeInputHeadless},
@@ -292,6 +307,18 @@ type Config struct {
 	// network. ax degrades gracefully to bundled or previously cached model data.
 	// Also honored via AX_OFFLINE=1 (any non-empty value) in the environment.
 	Offline bool `toml:"offline"`
+	// AutoStores gates the auto-discovered secondary stores: the harness's own
+	// env override (CLAUDE_CONFIG_DIR, CODEX_HOME, PI_CODING_AGENT_DIR,
+	// XDG_DATA_HOME) and, across a WSL boundary, the other side's home
+	// directories (Windows homes under the WSL mount root; running distros'
+	// homes from native Windows). nil/true (default) discovers them; false
+	// indexes only what glob/db name. Machine-local; never synced.
+	AutoStores *bool `toml:"auto_stores"`
+}
+
+// AutoStoresOn reports whether auto-discovered stores are enabled (the default).
+func (c Config) AutoStoresOn() bool {
+	return c.AutoStores == nil || *c.AutoStores
 }
 
 // Sandbox is the OS-sandbox wrapper configuration (see Config.Sandbox).
@@ -441,7 +468,7 @@ func Default() Config {
 	return Config{Retention: Retention{AutoRetire: true, RetainAfter: "10m", PruneCrashed: true, ReapConcludedWorkers: true, ReapAfter: "60s"}, Harnesses: []Harness{
 		{
 			Name:   "claude",
-			Glob:   "~/.claude/projects/*/*.jsonl",
+			Glob:   StringList{"~/.claude/projects/*/*.jsonl"},
 			IDRe:   `/(?P<id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$`,
 			Format: "claude",
 			Resume: "cd {dir} && claude --resume {id} --model {model} {args}",
@@ -463,7 +490,7 @@ func Default() Config {
 		},
 		{
 			Name:   "pi",
-			Glob:   "~/.pi/agent/sessions/*/*.jsonl",
+			Glob:   StringList{"~/.pi/agent/sessions/*/*.jsonl"},
 			IDRe:   `_(?P<id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$`,
 			Format: "pi",
 			// --approve trusts the project's local files for this run, defusing pi's
@@ -492,7 +519,7 @@ func Default() Config {
 		},
 		{
 			Name:   "codex",
-			Glob:   "~/.codex/sessions/*/*/*/rollout-*.jsonl",
+			Glob:   StringList{"~/.codex/sessions/*/*/*/rollout-*.jsonl"},
 			IDRe:   `-(?P<id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$`,
 			Format: "codex",
 			// Current codex (0.142.x) gates every launch AND resume in an untrusted
@@ -539,7 +566,7 @@ func Default() Config {
 		},
 		{
 			Name:   "opencode",
-			DB:     "~/.local/share/opencode/opencode.db",
+			DB:     StringList{"~/.local/share/opencode/opencode.db"},
 			Format: "opencode",
 			Resume: "cd {dir} && opencode --session {id} {args}",
 			// opencode's headless run is the `run` subcommand; it has no system-prompt
@@ -584,6 +611,7 @@ func Load() (Config, error) {
 		if os.IsNotExist(err) {
 			cfg.BehaviorsDir = contentDirDefault("behaviors")
 			cfg.RecipesDir = contentDirDefault("recipes")
+			ResolveStores(&cfg, nil)
 			return cfg, nil
 		}
 		return cfg, err
@@ -653,10 +681,17 @@ func Load() (Config, error) {
 	cfg.Binds = user.Binds                   // picker leader-key bindings, user-defined
 	cfg.DefaultHarness = user.DefaultHarness // default harness for bare-prompt dispatch, user-defined
 	cfg.Offline = user.Offline               // network opt-out, user-defined
+	cfg.AutoStores = user.AutoStores         // auto-discovered stores gate, user-defined
 	if user.Shell != "" {
 		cfg.Shell = user.Shell
 	}
+	// Harnesses whose store paths the user set explicitly: the env override is
+	// not applied on top of an explicit glob/db (the user named the store).
+	userStores := map[string]bool{}
 	for _, h := range userHarnesses.Harnesses {
+		if h.Glob != nil || h.DB != nil {
+			userStores[h.Name] = true
+		}
 		replaced := false
 		for i := range cfg.Harnesses {
 			if cfg.Harnesses[i].Name == h.Name {
@@ -669,6 +704,7 @@ func Load() (Config, error) {
 			cfg.Harnesses = append(cfg.Harnesses, h.toHarness())
 		}
 	}
+	ResolveStores(&cfg, userStores)
 	return cfg, nil
 }
 

@@ -23,6 +23,7 @@ import (
 type Session struct {
 	Harness string
 	Host    string // federation host label; "" = local (set by the access point)
+	Store   string // foreign-store badge: "" = local/primary, else "win"/"wsl" (set at index time)
 	ID      string
 	Dir     string
 	Model   string
@@ -106,50 +107,76 @@ func index(cfg config.Config, persist bool) []Session {
 	fresh := map[string]cacheEntry{}
 	dirty := false
 	var out []Session
+	seenID := map[string]bool{} // dedupe an id across stores; the primary store wins
 	for _, h := range cfg.Harnesses {
-		if h.Format == "opencode" {
-			for _, s := range indexOpencode(config.ExpandHome(h.DB), persist) {
-				s.Harness = h.Name
-				out = append(out, s)
-			}
-			continue
-		}
 		re, err := regexp.Compile(h.IDRe)
-		if err != nil {
-			continue
+		reOK := err == nil
+		var idIdx int
+		if reOK {
+			idIdx = re.SubexpIndex("id")
 		}
-		idIdx := re.SubexpIndex("id")
-		matches, _ := filepath.Glob(config.ExpandHome(h.Glob))
-		for _, path := range matches {
-			st, err := os.Stat(path)
-			if err != nil {
+		for _, store := range h.EffectiveStores() {
+			if store.DB != "" {
+				for _, s := range indexOpencode(store.DB, persist) {
+					s.Harness = h.Name
+					s.Store = store.Label
+					s.Dir = config.TranslateCwd(store, s.Dir)
+					if store.Label != "" && seenID[s.ID] {
+						continue
+					}
+					seenID[s.ID] = true
+					out = append(out, s)
+				}
 				continue
 			}
-			mt := st.ModTime().UnixNano()
-			if e, ok := cache[path]; ok && e.MTime == mt {
-				fresh[path] = e
-				out = append(out, e.Sess)
+			if !reOK {
 				continue
 			}
-			// Match the id_regex against a forward-slash form of the path: the
-			// built-in patterns anchor the id after a "/" separator, which a
-			// native Windows glob result (backslashes) would never satisfy, so
-			// every session went unindexed there. ToSlash is identity on unix.
-			m := re.FindStringSubmatch(filepath.ToSlash(path))
-			if m == nil || idIdx < 0 || idIdx >= len(m) {
-				continue
+			matches, _ := filepath.Glob(store.Glob)
+			for _, path := range matches {
+				st, err := os.Stat(path)
+				if err != nil {
+					continue
+				}
+				mt := st.ModTime().UnixNano()
+				if e, ok := cache[path]; ok && e.MTime == mt {
+					if store.Label != "" && seenID[e.Sess.ID] {
+						fresh[path] = e
+						continue
+					}
+					seenID[e.Sess.ID] = true
+					fresh[path] = e
+					out = append(out, e.Sess)
+					continue
+				}
+				// Match the id_regex against a forward-slash form of the path: the
+				// built-in patterns anchor the id after a "/" separator, which a
+				// native Windows glob result (backslashes) would never satisfy, so
+				// every session went unindexed there. ToSlash is identity on unix.
+				m := re.FindStringSubmatch(filepath.ToSlash(path))
+				if m == nil || idIdx < 0 || idIdx >= len(m) {
+					continue
+				}
+				s := ParseByFormat(h.Format, path)
+				if s == nil {
+					continue
+				}
+				s.Harness = h.Name
+				s.Store = store.Label
+				if s.ID == "" {
+					s.ID = m[idIdx]
+				}
+				s.Dir = config.TranslateCwd(store, s.Dir)
+				fresh[path] = cacheEntry{MTime: mt, Sess: *s}
+				dirty = true // a transcript was (re)parsed
+				// A foreign store never shadows a session already seen in the
+				// primary store (the same id federated across the boundary).
+				if store.Label != "" && seenID[s.ID] {
+					continue
+				}
+				seenID[s.ID] = true
+				out = append(out, *s)
 			}
-			s := ParseByFormat(h.Format, path)
-			if s == nil {
-				continue
-			}
-			s.Harness = h.Name
-			if s.ID == "" {
-				s.ID = m[idIdx]
-			}
-			out = append(out, *s)
-			fresh[path] = cacheEntry{MTime: mt, Sess: *s}
-			dirty = true // a transcript was (re)parsed
 		}
 	}
 	// Rewrite the cache only when something changed: pollers (fence watchers,

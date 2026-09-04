@@ -57,7 +57,7 @@ func buildSynthSet(tb testing.TB, n int) config.Config {
 
 	return config.Config{Harnesses: []config.Harness{{
 		Name:   "claude",
-		Glob:   filepath.Join(projRoot, "*", "*.jsonl"),
+		Glob:   config.StringList{filepath.Join(projRoot, "*", "*.jsonl")},
 		IDRe:   `/(?P<id>[^/]+)\.jsonl$`,
 		Format: "claude",
 	}}}

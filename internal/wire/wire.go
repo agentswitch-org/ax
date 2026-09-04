@@ -13,11 +13,12 @@ import "time"
 // persisted launch spec); v4 added Failed/FailReason (a headless run erroring);
 // v5 added the node Capability self-report block; v6 added lifecycle and archive
 // retention flags; v7 added the worker-reuse facts (keep_live, keep_until,
-// reuse_ready, terminal_at, idle_since). Every added field decodes as
+// reuse_ready, terminal_at, idle_since); v8 added the foreign-store badge
+// (a session indexed across a WSL boundary). Every added field decodes as
 // its zero value from an older report, so all versions interoperate (see
 // MinSchemaVersion): an older ax reading a newer report ignores unknown fields,
 // and a newer ax reading an older report tolerates the missing ones.
-const SchemaVersion = 7
+const SchemaVersion = 8
 
 // MinSchemaVersion is the oldest report a viewer still understands. The metadata
 // fields are additive, so a v1 host federates fine (its metadata reads empty).
@@ -87,6 +88,7 @@ type Capability struct {
 // label and its own viewer-window locator on top.
 type Session struct {
 	Harness     string    `json:"harness"`
+	Store       string    `json:"store,omitempty"` // foreign-store badge (v8+): "" local, else "win"/"wsl"
 	ID          string    `json:"id"`
 	Dir         string    `json:"dir"`
 	Model       string    `json:"model"`

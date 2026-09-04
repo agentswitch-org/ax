@@ -313,6 +313,8 @@ macOS, Linux, and Windows (amd64 and arm64).
 
 On Windows ax runs natively. The built-in `process` backend puts each harness under a [ConPTY](https://learn.microsoft.com/en-us/windows/console/pseudoconsoles) confined to a kill-on-close job object. It drives steering input (`ax send`, interrupts) over a per-session named pipe, so the full launch, detach, monitor, reattach loop works with no external dependency. The process backend is the native default on Windows. tmux popup/window-management features are Unix mux features; leave `mux` unset unless you have verified another backend in your own Windows terminal stack. WSL remains an option when you want the POSIX toolchain.
 
+Inside WSL, ax reaches across the interop boundary. A `claude` (or `codex`, `pi`) on the WSL PATH often resolves to the Windows install and files its sessions in the Windows home under `/mnt/c/Users/<you>/.claude`, not in the Linux home. ax auto-detects WSL and indexes those Windows stores too, so every session shows up in one list wherever it was started. Foreign-store rows carry a dimmed `·win` badge on the harness (a native-Windows ax carries a `·wsl` badge on sessions from a running distro). Run `ax config stores` to see every store ax indexes, its match count, and a note when a harness binary is the Windows one reached through interop. Turn the cross-boundary indexing off with `auto_stores = false`.
+
 Windows hosts work in federation too. A host such as `win01` can be added with `transport = "ssh -t win01"`; if its sshd default shell is PowerShell, set `shell = "pwsh"` in that `[[host]]` entry so remote arguments are quoted correctly. Mark the host `headless = true` when remote interactive launch/attach has not been verified for that box. Remote ids show up as `win01/<id>`, and `ax config status` reports each host's OS, shell, ax version, and wire compatibility.
 
 ## Runtime requirements
@@ -348,6 +350,8 @@ Press `` ` `` (the leader, rebindable as `bind`), then a key, to run your own sh
 ## Configuration
 
 Claude Code, Codex, pi, and opencode are built in and work with no config file. To add or change a harness, copy `config.example.toml` to `~/.config/ax/config.toml`. Each `[[harness]]` says where its transcripts live and how to resume a session.
+
+A harness's `glob` (and opencode's `db`) can be one path or a list. The first entry is the primary store, the one ax resumes from; the rest are extra stores ax also indexes, so an old location or a second account still shows up. Without an explicit `glob`, ax resolves each built-in harness's store from its own relocation environment variable when set (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`, `XDG_DATA_HOME`), and, inside WSL, adds the Windows-side stores across the interop boundary. `ax config stores` prints the resolved list per harness. Set `auto_stores = false` to index only the paths you name.
 
 Set `default_harness` to drop the harness name from the command line:
 
@@ -397,7 +401,7 @@ Folder trust: when ax launches a session in a directory, it pre-accepts the Clau
 
 ax sends nothing anywhere. There is no telemetry and no account. Its only network use is the explicit `ax models update` command, which fetches the public model-price catalog from models.dev, plus the SSH or other transports you configure for remote hosts. Set `offline = true` in `~/.config/ax/config.toml` (or `AX_OFFLINE=1` in the environment) to block even the model update call; ax falls back to bundled or cached model data.
 
-ax stores its state under `$XDG_STATE_HOME/ax` (default `~/.local/state/ax`): session metadata, run records, heartbeat files, and a plain-text search cache of your transcripts. Config lives at `~/.config/ax/config.toml`. ax reads your harness's transcript stores (e.g. `~/.claude/projects/`) but never modifies them.
+ax stores its state under `$XDG_STATE_HOME/ax` (default `~/.local/state/ax`): session metadata, run records, heartbeat files, and a plain-text search cache of your transcripts. Config lives at `~/.config/ax/config.toml`. ax reads your harness's transcript stores (e.g. `~/.claude/projects/`) but never modifies them. Inside WSL it also reads the Windows-side stores under the mount root (e.g. `/mnt/c/Users/<you>/.claude/`) so interop-started sessions are visible; it never writes there either.
 
 Running `ax hook install claude` merges lifecycle hooks into `~/.claude/settings.json`; ax announces the write and is idempotent.
 

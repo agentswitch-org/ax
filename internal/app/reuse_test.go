@@ -311,12 +311,12 @@ func TestToWireReuseFacts(t *testing.T) {
 	}
 }
 
-// The schema bump is additive: SchemaVersion is 7, and a report that predates the
+// The schema bump is additive: SchemaVersion is 8, and a report that predates the
 // reuse facts (no keep_live/reuse_ready/terminal_at) still decodes, with those
 // fields reading as their zero values.
 func TestWireSchemaAdditiveReuseFacts(t *testing.T) {
-	if wire.SchemaVersion != 7 {
-		t.Fatalf("SchemaVersion = %d, want 7", wire.SchemaVersion)
+	if wire.SchemaVersion != 8 {
+		t.Fatalf("SchemaVersion = %d, want 8", wire.SchemaVersion)
 	}
 	// A v6-shaped session row: no reuse-fact fields at all.
 	old := `{"harness":"claude","id":"w","dir":"/tmp","model":"opus","title":"t","last":"2026-07-05T00:00:00Z","state":"live","activity":"idle","done":true}`

@@ -14,7 +14,8 @@ package config
 //	  DefaultHarness).
 //	LOCAL (never synced, preserved on the target): Hosts, per-harness Glob + DB,
 //	  Shell, BehaviorsDir, RecipesDir, Mux, HoldBackend, Notify, Binds, Fence,
-//	  Policy, Metrics, Retention, Offline.
+//	  Policy, Metrics, Retention, Offline, AutoStores (all path-, OS-, or
+//	  machine-shaped: a store layout on one box must not overwrite another's).
 //
 // Excluding Shell/Mux/Glob/DB and compose directories sidesteps cross-OS harm
 // (a macOS glob/path or a pwsh shell must not land on a Windows box); excluding

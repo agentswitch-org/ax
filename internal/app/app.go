@@ -94,7 +94,11 @@ func (a App) Pick() {
 	choice, err := a.find.Pick(finder.View{Load: a.loadPickView})
 	restore()
 	if errors.Is(err, finder.ErrNoSessions) {
-		fmt.Fprintln(os.Stderr, "ax: no sessions found in this view. Start one with 'ax new' or 'ax claude \"your task\"'; use 'ax list --all' for archived local sessions or 'ax list --federated --all' for configured hosts.")
+		hint := ""
+		if config.InWSL() {
+			hint = " In WSL, sessions started through the Windows CLI file under the Windows store; run 'ax config stores' to see every store ax indexes."
+		}
+		fmt.Fprintln(os.Stderr, "ax: no sessions found in this view. Start one with 'ax new' or 'ax claude \"your task\"'; use 'ax list --all' for archived local sessions or 'ax list --federated --all' for configured hosts."+hint)
 		return
 	}
 	if err != nil {
@@ -1933,6 +1937,7 @@ func reuseReadyFacts(r state.Runtime, mode, task string, keepLive bool, keepUnti
 func toWire(s session.Session, r state.Runtime) wire.Session {
 	return wire.Session{
 		Harness:     s.Harness,
+		Store:       s.Store,
 		ID:          s.ID,
 		Dir:         s.Dir,
 		Model:       s.Model,
@@ -2223,6 +2228,7 @@ func fetchHost(h config.Host) ([]session.Session, map[string]state.Runtime, stri
 func fromWire(ws wire.Session, host string) session.Session {
 	return session.Session{
 		Harness:     ws.Harness,
+		Store:       ws.Store,
 		Host:        host,
 		ID:          ws.ID,
 		Dir:         ws.Dir,

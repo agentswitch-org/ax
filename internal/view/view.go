@@ -80,6 +80,25 @@ var harnessHues = map[string]string{
 
 var hueCycle = []string{"38;5;215", "38;5;140", "38;5;114", "38;5;75", "38;5;210", "38;5;80"}
 
+// harnessBadge renders the harness name, suffixed with a dimmed store badge when
+// the session was indexed from a foreign store (a Windows transcript seen from
+// WSL, or the reverse), so it is clear the session lives across the boundary.
+func harnessBadge(s session.Session) string {
+	name := ansi(hueFor(s.Harness), s.Harness)
+	if s.Store == "" {
+		return name
+	}
+	return name + ansi("2", "·"+s.Store)
+}
+
+// harnessBadgePlain is the un-colored badge, for sorting and filtering.
+func harnessBadgePlain(s session.Session) string {
+	if s.Store == "" {
+		return s.Harness
+	}
+	return s.Harness + "·" + s.Store
+}
+
 func hueFor(name string) string {
 	if h, ok := harnessHues[name]; ok {
 		return h
@@ -155,11 +174,13 @@ var registry = []column{
 		func(a, b session.Session, _ models.DB, meta map[string]RowMeta) bool {
 			return meta[session.Key(a)].Archived && !meta[session.Key(b)].Archived
 		}},
-	{"harness", "HARNESS", 8, false,
-		func(s session.Session, _ models.DB, _ RowMeta, _, _ int) string {
-			return ansi(hueFor(s.Harness), s.Harness)
+	{"harness", "HARNESS", 11, false,
+		func(s session.Session, _ models.DB, _ RowMeta, w, _ int) string {
+			return clip(harnessBadge(s), w)
 		},
-		func(a, b session.Session, _ models.DB, _ map[string]RowMeta) bool { return a.Harness < b.Harness }},
+		func(a, b session.Session, _ models.DB, _ map[string]RowMeta) bool {
+			return harnessBadgePlain(a) < harnessBadgePlain(b)
+		}},
 	{"state", "STATE", 5, false,
 		func(_ session.Session, _ models.DB, m RowMeta, _, _ int) string { return stateCell(m.State) },
 		func(a, b session.Session, _ models.DB, meta map[string]RowMeta) bool {
@@ -915,7 +936,7 @@ func ColumnFilterText(cfg config.Config, db models.DB, s session.Session, m RowM
 		}
 		return ""
 	case "harness":
-		return s.Harness
+		return harnessBadgePlain(s)
 	case "state":
 		return m.State
 	case "spin":

@@ -144,6 +144,29 @@
 # resume = "cd {dir} && myagent --resume {id}"
 # launch = "myagent"
 
+# Transcript stores: glob (and opencode's db) accept ONE path or a LIST. The
+# first entry is the PRIMARY store (where the harness reads/writes and the one a
+# resume is served from); every further entry is an extra store ax also indexes
+# (an old location, a second account). Both are machine-local, like a single
+# glob, and excluded from `ax config sync`.
+# [[harness]]
+# name = "claude"
+# glob = ["~/.claude/projects/*/*.jsonl", "~/.claude-work/projects/*/*.jsonl"]
+
+# Auto-discovered stores (default on). With no explicit glob for a built-in
+# harness, ax also indexes:
+#   - the harness's own relocation env var when set: CLAUDE_CONFIG_DIR,
+#     CODEX_HOME, PI_CODING_AGENT_DIR, XDG_DATA_HOME (opencode). A non-default
+#     value becomes the primary store, since that is where the harness now files
+#     sessions.
+#   - inside WSL, the Windows-side stores across the interop boundary
+#     (/mnt/c/Users/*/.claude, ...), because a `claude` on the WSL PATH usually
+#     resolves to the Windows install and files sessions in the Windows home.
+#     Those rows show a `·win` badge; a native-Windows ax shows `·wsl`.
+# `ax config stores` prints the resolved store list and match counts per harness.
+# Set this false to index only the paths you name explicitly.
+# auto_stores = false
+
 # ---- control layer ----
 
 # Extra launch placeholders: {behavior} (system prompt), {task} (initial prompt),

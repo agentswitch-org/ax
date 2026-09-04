@@ -28,7 +28,7 @@ import (
 // Config dispatches the `ax config <sub>` verb group.
 func (a App) Config(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "ax config: need a subcommand (export-profile | apply-profile | sync | status | rollback)")
+		fmt.Fprintln(os.Stderr, "ax config: need a subcommand (export-profile | apply-profile | sync | status | stores | rollback)")
 		os.Exit(2)
 	}
 	sub, rest := args[0], args[1:]
@@ -41,10 +41,12 @@ func (a App) Config(args []string) {
 		a.configSync(rest)
 	case "status":
 		a.configStatus(rest)
+	case "stores":
+		a.configStores(rest)
 	case "rollback":
 		a.configRollback(rest)
 	default:
-		fmt.Fprintf(os.Stderr, "ax config: unknown subcommand %q (want export-profile | apply-profile | sync | status | rollback)\n", sub)
+		fmt.Fprintf(os.Stderr, "ax config: unknown subcommand %q (want export-profile | apply-profile | sync | status | stores | rollback)\n", sub)
 		os.Exit(2)
 	}
 }

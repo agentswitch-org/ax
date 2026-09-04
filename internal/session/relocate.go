@@ -52,7 +52,12 @@ func Relocate(h config.Harness, s Session) error {
 	if h.Format != "claude" || s.File == "" || s.Dir == "" {
 		return nil
 	}
-	root := globRoot(h.Glob)
+	// A foreign-store session (a Windows transcript indexed from WSL) resumes on
+	// its own side of the boundary; never move its file into the local store.
+	if s.Store != "" {
+		return nil
+	}
+	root := globRoot(h.PrimaryStore().Glob)
 	if root == "" {
 		return nil
 	}
