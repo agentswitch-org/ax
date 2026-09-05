@@ -136,3 +136,60 @@ func TestWindowsHomesUnder(t *testing.T) {
 		t.Fatalf("service account Public must be skipped: %v", got)
 	}
 }
+
+// Store discovery is memoized once per process: buildStores runs it per harness
+// and config.Load runs on every command and picker reindex tick, so an uncached
+// walk/spawn would repeat several times a second. The enumerator must run once
+// across repeated calls, and only resetStoreCaches re-enables it.
+func TestWindowsHomesDiscoveryMemoized(t *testing.T) {
+	saved := enumWindowsHomes
+	t.Cleanup(func() { enumWindowsHomes = saved; resetStoreCaches() })
+	resetStoreCaches()
+
+	calls := 0
+	enumWindowsHomes = func(root string) []string {
+		calls++
+		return []string{root + "c/Users/alice"}
+	}
+	for i := 0; i < 5; i++ {
+		got := windowsHomesFromWSL()
+		if len(got) != 1 || got[0] != "/mnt/c/Users/alice" {
+			t.Fatalf("call %d returned %v", i, got)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("enumerator ran %d times across 5 calls, want 1 (memoization broken)", calls)
+	}
+
+	// Simulate four harnesses resolving stores in one Load: still one enumeration.
+	for range 4 {
+		windowsHomesFromWSL()
+	}
+	if calls != 1 {
+		t.Fatalf("enumerator ran %d times after per-harness calls, want 1", calls)
+	}
+
+	resetStoreCaches()
+	windowsHomesFromWSL()
+	if calls != 2 {
+		t.Fatalf("after reset enumerator ran %d total, want 2", calls)
+	}
+}
+
+// The wsl.exe distro lister is memoized the same way (Windows side).
+func TestWSLDistroListMemoized(t *testing.T) {
+	saved := listWSLDistros
+	t.Cleanup(func() { listWSLDistros = saved; resetStoreCaches() })
+	resetStoreCaches()
+
+	calls := 0
+	listWSLDistros = func() ([]byte, error) { calls++; return []byte("Ubuntu\r\n"), nil }
+	for range 4 {
+		wslHomesFromWindows()
+	}
+	// On a non-Windows host enumWSLHomes returns before listing, so calls stays 0
+	// there; on Windows it must be exactly 1. Either way it is never > 1.
+	if calls > 1 {
+		t.Fatalf("wsl.exe lister ran %d times across 4 calls, want at most 1", calls)
+	}
+}
