@@ -4,6 +4,17 @@ All notable changes to ax are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 0.1.4 - 2026-09-05
+
+### Fixed
+
+- **WSL store discovery is memoized once per process.** v0.1.3 resolved the
+  cross-boundary stores per harness on every `config.Load`, spawning
+  `wsl.exe -l -q` on Windows or walking `/mnt/*/Users` in WSL up to four times
+  per load, and several times a second in the picker's reindex tick. Discovery
+  now runs once behind `sync.Once`; a distro started later is seen on the next
+  ax start.
+
 ## 0.1.3 - 2026-09-05
 
 ### Added
