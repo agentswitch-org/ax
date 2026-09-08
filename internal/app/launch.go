@@ -443,6 +443,12 @@ func (a App) runLaunch(harness string, o launchOpts, ctx launchCtx) {
 	// mutates o.behavior/o.task below). This is what `ax restart` reconstructs from.
 	spec := specFromOpts(harness, o, group, parent, origin)
 
+	// Every launch carries the ax preamble ahead of the user's behavior, so the
+	// session knows it runs under ax and reads `ax help` before driving it. The
+	// spec above keeps only the user's own behavior; a restart re-adds the
+	// preamble here.
+	behavior = withPreamble(id, group, behavior)
+
 	task := o.task
 
 	// Freeform labels flow down the run: the child inherits the launching

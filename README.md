@@ -278,6 +278,15 @@ ax wait "$id"     # blocks until done; exit code reflects the outcome
 ax result "$id"   # prints its captured final report
 ```
 
+Every session ax launches carries a short ax preamble in its system prompt
+(folded into the task for a harness with no system-prompt flag, such as codex).
+It tells the model that it runs under ax, gives it its session id and run, and
+points it at `ax help`. So a session can delegate, wait, recover, and message
+other sessions with no setup, and a prompt such as
+`ax claude "you crashed, find the last session about X and get your worker back online"`
+resolves to `ax search`, `ax restart`, and `ax continue` on its own. Your
+`--behavior` text follows the preamble.
+
 Avoid long blocking `ax wait --timeout 30m` in the foreground when running a
 fleet because it stalls supervision of all other workers in the run. For live
 supervision of only the workers active now, without replaying an old run's
