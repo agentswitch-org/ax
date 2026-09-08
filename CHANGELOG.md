@@ -4,7 +4,19 @@ All notable changes to ax are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.1.5 - 2026-09-08
+
+### Added
+
+- **Every launch carries an ax preamble.** A session started with
+  `ax <harness> "TASK"`, `ax continue`, `ax restart`, or `ax coordinate` gets a
+  short system-prompt block ahead of any `--behavior` text: it runs under ax,
+  its session id and run, the common verbs, and a pointer to `ax help`. Codex
+  and other harnesses with no system-prompt flag get it folded into the task.
+  A launched session no longer has to be told what ax is before it can
+  delegate, wait, recover, or message other sessions.
+- `--max-auto-turns N` caps every automatic submission of a self-propelled
+  session. `ax result` reports a cap's reason (`fail_reason` in JSON).
 
 ### Changed
 
