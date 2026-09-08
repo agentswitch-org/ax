@@ -42,6 +42,12 @@ func (a App) HookState(args []string) {
 	}
 	switch args[0] {
 	case "stop":
+		if m := meta.Load(id); selfPropelled(m) && concludable(m) {
+			// A turn boundary must not release ax wait or close the holder
+			// before the pump checks acceptance and its continuation budget.
+			state.WriteHook(id, state.TurnEnded)
+			return
+		}
 		// The main agent's turn ended (claude's Stop hook). A task-carrying
 		// interactive worker concludes here: with no human to steer it, the first
 		// turn-end IS its task completing. A taskless session a human is driving
@@ -180,6 +186,15 @@ func ConcludeTurnEnd(id, errReason string) {
 		return
 	}
 	App{}.concludeWorker(id, func(cid string) { live.Kill(cid) })
+}
+
+// ConcludePropel owns the final verdict after the Stop hook. A failed pump must
+// replace a legacy hook's provisional done marker so wait/result report the cap.
+func ConcludePropel(id, reason string) {
+	if reason != "" && state.Done(id) {
+		state.RemoveHook(id)
+	}
+	ConcludeTurnEnd(id, reason)
 }
 
 // CaptureResult snapshots a concluding session's final report (its last

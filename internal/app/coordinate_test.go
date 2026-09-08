@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/agentswitch-org/ax/internal/config"
 )
@@ -27,6 +28,9 @@ func TestCoordinateOptsDefaultsAndOverrides(t *testing.T) {
 	if o.fenceMode != "best-effort" || o.fen.maxWorkers != 2 || o.fen.maxDepth != 2 {
 		t.Errorf("fenceMode=%q maxWorkers=%d maxDepth=%d, want best-effort/2/2", o.fenceMode, o.fen.maxWorkers, o.fen.maxDepth)
 	}
+	if o.fen.maxTokens != 250000 || o.fen.timeout != 30*time.Minute {
+		t.Fatalf("run lacks default token/time budgets: %+v", o.fen)
+	}
 	if o.name != "coordinator" || !hasLabelKey(o.labels, "role") {
 		t.Errorf("name=%q labels=%v, want coordinator identity", o.name, o.labels)
 	}
@@ -36,12 +40,15 @@ func TestCoordinateOptsDefaultsAndOverrides(t *testing.T) {
 
 	over := coordinateOpts(cfg, h, launchOpts{
 		task: "x", name: "boss", fenceMode: "strict",
-		fen:      fences{writeGlobs: []string{"./docs/**"}, maxWorkers: 5, maxDepth: 1},
+		fen:      fences{writeGlobs: []string{"./docs/**"}, maxWorkers: 5, maxDepth: 1, maxTokens: 90000, timeout: 5 * time.Minute},
 		labels:   []string{"role=lead"},
 		behavior: "/my/behavior.md",
 	}, false)
 	if over.name != "boss" || over.fenceMode != "strict" || over.fen.maxWorkers != 5 || over.fen.maxDepth != 1 {
 		t.Errorf("explicit values must win: %+v", over)
+	}
+	if over.fen.maxTokens != 90000 || over.fen.timeout != 5*time.Minute {
+		t.Fatal("explicit run budgets must win")
 	}
 	if over.behavior != "/my/behavior.md" || over.fen.writeGlobs[0] != "./docs/**" {
 		t.Errorf("explicit behavior/fence must win: behavior=%q globs=%v", over.behavior, over.fen.writeGlobs)

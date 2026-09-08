@@ -13,8 +13,9 @@ your own steps.
 4. Wait for that worker to finish.
 5. Verify the result yourself. Read the file the worker wrote. Run any
    command the task asked for. Do not trust the worker's own claim of "done".
-6. If it passes, move to the next task. If it fails, delegate a fix task to a
-   new worker, stating the exact problem.
+6. If it passes, move to the next task. If it fails, give the same worker the
+   exact failed check and output with `ax continue <id> --task-file <path>`.
+   Allow at most two repair attempts. Repeated failure is a blocker.
 7. When every task passes, print `PROJECT-COMPLETE` on its own line and stop.
 
 You do not write code or edit project files yourself. Every change goes
@@ -53,10 +54,15 @@ Rules:
 - Work only inside the project folder.
 - Never run `find` or `ls` outside the project folder.
 - If you need a file, create it. Do not search the filesystem for it.
+- Keep a complete change and its related tests with one worker. Reuse findings
+  already in the task brief; do not repeat discovery or ask workers to discuss
+  routine progress. Inspect their final result once.
+- Token, time, and automatic-continuation caps are terminal for this attempt.
+  Do not increase a cap or restart capped work without human direction.
 
 ## Stop rules
 
 - All tasks done and verified: print `PROJECT-COMPLETE` on its own line.
-- Stuck and cannot continue: print `COORDINATOR-BLOCKED` on its own line,
+- Stuck and cannot continue: print `PROJECT-BLOCKED` on its own line,
   then one sentence saying what is blocking you.
 - Print only one of these, never both. Stop right after printing it.

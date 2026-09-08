@@ -94,18 +94,22 @@ func (a App) Result(args []string) {
 			sessionID = id
 		}
 		json.NewEncoder(os.Stdout).Encode(struct {
-			ID      string `json:"id"`
-			Session string `json:"session,omitempty"`
-			Outcome string `json:"outcome"`
-			Exit    int    `json:"exit"`
-			Result  string `json:"result"`
-		}{asked, sessionID, outcome, exit, m.Result})
+			ID         string `json:"id"`
+			Session    string `json:"session,omitempty"`
+			Outcome    string `json:"outcome"`
+			Exit       int    `json:"exit"`
+			Result     string `json:"result"`
+			FailReason string `json:"fail_reason,omitempty"`
+		}{asked, sessionID, outcome, exit, m.Result, m.FailReason})
 		return
 	}
 	if m.Result != "" {
 		fmt.Println(m.Result)
 	}
 	fmt.Fprintf(os.Stderr, "outcome=%s exit=%d\n", outcome, exit)
+	if m.FailReason != "" {
+		fmt.Fprintln(os.Stderr, "reason="+m.FailReason)
+	}
 }
 
 // resultOutcome resolves a session's outcome for `ax result`: the recorded

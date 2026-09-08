@@ -220,6 +220,34 @@ curl -fsSL https://agentswitch.org/coordinator.sh | sh   # macOS/Linux
 irm https://agentswitch.org/coordinator.ps1 | iex        # Windows PowerShell
 ```
 
+## Bounded automatic continuation
+
+`--self-propel` resumes an unfinished task within a finite budget:
+
+- At most 6 automatic submissions (`--max-auto-turns`), counting error retries,
+  worker wakeups, and lost-submit retries. Progress never refills it.
+- Stop after 3 turns with no workspace change (`--max-idle-turns`). Progress is
+  changed file contents, or one artifact named by `--propel-watch PATH`.
+- `PROJECT-BLOCKED` stops with a reason. A configured `--propel-until` or
+  `--accept` check must pass; `PROJECT-COMPLETE` cannot override a failure, and
+  `--accept` needs both. Completion waits for live workers.
+- The default continuation prompt carries a short task brief and the last
+  failed check's output. Checks time out after two minutes.
+
+`ax coordinate` also defaults to `--max-tokens 250000` and `--timeout 30m`.
+Those fences are polled every ten seconds and can overshoot slightly. Override
+any budget explicitly:
+
+```sh
+ax coordinate "Implement the importer" --accept "go test ./..." \
+  --max-tokens 400000 --timeout 45m --max-auto-turns 8
+```
+
+A cap marks the task failed, keeps its work, and reports the reason through
+`ax result` (`fail_reason` in JSON). The submission count survives reopening a
+session; a new task or `ax restart` starts fresh. Existing behavior files in
+`behaviors_dir` are never overwritten; the runtime limits apply regardless.
+
 ## Common commands
 
 ```

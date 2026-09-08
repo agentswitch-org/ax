@@ -18,7 +18,7 @@ func TestUsageDocumentsAcceptedFlags(t *testing.T) {
 		"--clean-env", "--env", "--auth", "--close-on-done", "--keep-live", "--keep-live-for",
 		"--write", "--no-write", "--no-subagents", "--fence", "--self-propel",
 		"--propel-prompt", "--propel-until", "--done-check", "--max-idle-turns",
-		"--propel-max-idle", "--propel-backoff", "--propel-watch",
+		"--propel-max-idle", "--max-auto-turns", "--propel-backoff", "--propel-watch",
 		"--with-args", "--federated", "--hosts", "--args", "--force", "--older-than",
 		"--stdin", "--rm-label", "--default", "--prom", "--ax", "--yes",
 	} {

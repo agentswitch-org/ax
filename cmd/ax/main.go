@@ -689,7 +689,7 @@ func watchTurnEnd(get func() string, write func([]byte), done <-chan struct{}) {
 	defer t.Stop()
 	var format, file string
 	var lastMod time.Time
-	var prop *propel.Propeller // non-nil only for a --self-propel keep-live pi/codex session
+	var prop *propel.Propeller // non-nil only for a supported --self-propel keep-live session
 	reopenOnly := false
 	first := true
 	for {
@@ -732,8 +732,8 @@ func watchTurnEnd(get func() string, write func([]byte), done <-chan struct{}) {
 			}
 			propelled := !reopenOnly && write != nil && m.KeepLive && m.Spec != nil && m.Spec.SelfPropel
 			if format == "claude" {
-				// claude's Stop hook is authoritative; without a pump the watcher
-				// retires. With one, the hook's terminal marker IS the turn-end signal.
+				// Without a pump, Claude's Stop hook concludes the task. With
+				// one, its provisional marker signals a turn for the pump to judge.
 				if !propelled {
 					return
 				}
@@ -758,21 +758,33 @@ func watchTurnEnd(get func() string, write func([]byte), done <-chan struct{}) {
 				continue // transcript not written yet
 			}
 		}
+		info, statErr := os.Stat(file)
+		changed := statErr == nil && info.ModTime().After(lastMod)
 		if prop != nil {
+			// Acknowledge output before ticking: activity arriving at the
+			// watchdog deadline must not cause a duplicate submission.
+			if changed {
+				prop.NoteActivity()
+			}
 			// The pump's timer hook: wakes a session parked on live workers once
 			// they finish, and runs the submit watchdog (an inject with no
 			// transcript activity counts as an idle turn so the cap still advances).
-			prop.Tick()
+			if prop.Tick() == propel.ActionDone {
+				app.NotifyPropelDone(id)
+			}
+			if prop.Stopped() {
+				return
+			}
 		}
 		if format == "claude" {
-			// The Stop hook already concluded the turn; ask the pump. Continue-shaped
+			// The Stop hook reported a turn boundary; ask the pump. Continue-shaped
 			// actions reopen the lifecycle so wait/picker track the next turn; a
 			// stopping pump leaves the marker standing and retires the watcher.
-			if info, err := os.Stat(file); err == nil && info.ModTime().After(lastMod) {
+			if changed {
 				lastMod = info.ModTime()
-				prop.NoteActivity() // the transcript moved: an outstanding inject landed
 			}
-			if !state.Terminal(id) {
+			hook, _ := state.HookState(id)
+			if hook != state.TurnEnded && !state.Terminal(id) {
 				continue
 			}
 			var act propel.Action
@@ -792,14 +804,10 @@ func watchTurnEnd(get func() string, write func([]byte), done <-chan struct{}) {
 			}
 			continue
 		}
-		info, err := os.Stat(file)
-		if err != nil || !info.ModTime().After(lastMod) {
+		if !changed {
 			continue
 		}
 		lastMod = info.ModTime()
-		if prop != nil {
-			prop.NoteActivity() // the transcript moved: an outstanding inject landed
-		}
 		app.ReopenIfTurnStartedAfterTerminal(id, format, file)
 		if reopenOnly {
 			if !state.Terminal(id) {
@@ -832,7 +840,7 @@ func watchTurnEnd(get func() string, write func([]byte), done <-chan struct{}) {
 }
 
 // newPropeller wires the self-propel state machine to its real effects for a
-// pi/codex session: the pty writer, the git/session/worker progress
+// supported session: the pty writer, the workspace-content progress
 // fingerprint, the --propel-until check, the transcript's final message, the
 // human-wait probe, the live-worker count, the conclude path (so `ax wait`
 // returns when the loop stops; the pump's reason decides success vs failed),
@@ -840,6 +848,8 @@ func watchTurnEnd(get func() string, write func([]byte), done <-chan struct{}) {
 func newPropeller(get func() string, write func([]byte), dir, group string) *propel.Propeller {
 	m := meta.Load(get())
 	cfg := propel.ConfigFromSpec(m.Spec)
+	cfg.Task = m.Task
+	var check propel.CheckResult
 	var fmtOf string
 	c, _ := config.Load()
 	for _, h := range c.Harnesses {
@@ -847,12 +857,20 @@ func newPropeller(get func() string, write func([]byte), dir, group string) *pro
 			fmtOf = h.Format
 		}
 	}
-	axlog.Printf("propel %s: self-propel engaged (max-idle=%d backoff=%s done-check=%t)",
-		get(), cfg.MaxIdle, cfg.Backoff, cfg.DoneCmd != "")
+	axlog.Printf("propel %s: self-propel engaged (max-idle=%d auto-turns=%d/%d backoff=%s done-check=%t)",
+		get(), cfg.MaxIdle, m.PropelAutoTurns, cfg.MaxAutoTurns, cfg.Backoff, cfg.DoneCmd != "")
 	return propel.New(cfg, propel.Deps{
-		Write:       write,
-		Fingerprint: func() string { return propel.Fingerprint(dir, group, get(), cfg.Watch) },
-		DoneCheck:   func() bool { return propel.RunDoneCheck(cfg.DoneCmd, dir) },
+		Write:     write,
+		AutoTurns: m.PropelAutoTurns,
+		SaveAutoTurns: func(n int) error {
+			return meta.Update(get(), func(m *meta.Meta) { m.PropelAutoTurns = n })
+		},
+		Fingerprint: func() string { return propel.Fingerprint(dir, cfg.Watch) },
+		DoneCheck: func() bool {
+			check = propel.RunCheck(cfg.DoneCmd, dir)
+			return check.Passed
+		},
+		CheckFeedback: func() string { return check.Output },
 		FinalReport: func() string {
 			id := get()
 			cf, _ := config.Load()
@@ -866,7 +884,7 @@ func newPropeller(get func() string, write func([]byte), dir, group string) *pro
 		},
 		NeedsHuman:   func() bool { return propel.NeedsHuman(get()) },
 		LiveChildren: func() int { return propel.LiveChildren(group, get()) },
-		Conclude:     func(reason string) { app.ConcludeTurnEnd(get(), reason) },
+		Conclude:     func(reason string) { app.ConcludePropel(get(), reason) },
 		NotifyStuck:  func() { notifyPropelStuck(get()) },
 		Log:          func(f string, a ...any) { axlog.Printf(f, a...) },
 	})
@@ -1165,19 +1183,22 @@ func usage() {
      [--sandbox | --no-sandbox]
      [--keep-live] [--keep-live-for D]
 	     [--self-propel [--propel-prompt P] [--propel-until CMD] [--max-idle-turns N]
-	      [--propel-backoff D] [--propel-watch PATH]]
+	      [--max-auto-turns N] [--propel-backoff D] [--propel-watch PATH]]
 	                         --self-propel (pi/codex/claude) is the outer loop: when the
 	                         session ends a turn but its task is not done, ax re-invokes
-	                         it so it keeps grinding (pi/codex via their transcript's turn
+	                         it within a finite budget (pi/codex via their transcript's turn
 	                         end, claude via its Stop hook's marker). --propel-prompt
-	                         replaces the generic built-in continue-prompt. Stops on a done
-	                         sentinel (PROJECT-COMPLETE), a --propel-until check that exits
-	                         0, a human wait, or --max-idle-turns (default 8) no-progress
-	                         turns; progress is git state, the run's sessions and live
-	                         workers, plus an optional --propel-watch file's mtime. It
-	                         never gives up while the session's own workers are still
-	                         running, and tolerates a short streak of transient error
-	                         turns. Implies --keep-live. Deprecated aliases still parse:
+	                         replaces the default task/failed-check brief. --max-auto-turns
+	                         caps ALL automatic submissions (default 6), including retries
+	                         and worker wakeups; progress never resets it. --max-idle-turns
+	                         stops after unchanged workspace contents (default 3). An
+	                         optional --propel-watch PATH selects the artifact to track.
+	                         PROJECT-BLOCKED stops with a reason. --propel-until succeeds
+	                         when its check passes; --accept requires both a passing check
+	                         and PROJECT-COMPLETE. Without a check, PROJECT-COMPLETE suffices.
+	                         Completion waits for workers. Human/worker waits spend no retries.
+	                         Use --max-tokens/--timeout to bound work inside each turn.
+	                         Implies --keep-live. Deprecated aliases still parse:
 	                         --done-check for --propel-until, and --propel-max-idle for
 	                         --max-idle-turns.
 	                         --write GLOB (repeatable) launches under the capability fence:

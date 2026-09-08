@@ -52,6 +52,9 @@ type Meta struct {
 	// pointer so a session that has not concluded omits it rather than reporting a
 	// misleading 0.
 	Exit *int `json:"exit,omitempty"`
+	// PropelAutoTurns is the consumed automatic-submission budget. Persisted
+	// before each submit; only assigning a new task resets it.
+	PropelAutoTurns int `json:"propel_auto_turns,omitempty"`
 	// CloseOnDone tears the session down when a task-carrying interactive worker
 	// concludes (--close-on-done), instead of halting it in the visible done state.
 	CloseOnDone bool `json:"close_on_done,omitempty"`
@@ -130,12 +133,13 @@ type Spec struct {
 	// coordinator until the project is done, waiting on a human, or capped. Opt-in
 	// via --self-propel; the run wrapper reads these off the persisted spec so the
 	// pump survives a restart. See internal/propel (the run wrapper's pump).
-	SelfPropel    bool   `json:"self_propel,omitempty"`     // the outer loop is engaged
-	PropelPrompt  string `json:"propel_prompt,omitempty"`   // continue-prompt injected each idle turn ("" => built-in default)
-	PropelDone    string `json:"propel_done,omitempty"`     // --propel-until/--done-check shell cmd; exit 0 => project complete
-	PropelMaxIdle int    `json:"propel_max_idle,omitempty"` // consecutive no-progress turns before stopping (0 => default)
-	PropelBackoff string `json:"propel_backoff,omitempty"`  // delay before re-injecting ("" => default)
-	PropelWatch   string `json:"propel_watch,omitempty"`    // --propel-watch: file whose mtime change counts as progress ("" => none)
+	SelfPropel         bool   `json:"self_propel,omitempty"`           // the outer loop is engaged
+	PropelPrompt       string `json:"propel_prompt,omitempty"`         // continue-prompt injected each idle turn ("" => built-in default)
+	PropelDone         string `json:"propel_done,omitempty"`           // --propel-until/--done-check shell cmd; exit 0 => project complete
+	PropelMaxIdle      int    `json:"propel_max_idle,omitempty"`       // consecutive no-progress turns before stopping (0 => default)
+	PropelMaxAutoTurns int    `json:"propel_max_auto_turns,omitempty"` // finite total automatic-submission cap (0 => default)
+	PropelBackoff      string `json:"propel_backoff,omitempty"`        // delay before re-injecting ("" => default)
+	PropelWatch        string `json:"propel_watch,omitempty"`          // --propel-watch: file whose content defines progress ("" => workspace)
 }
 
 func dir() string { return axdir.State("meta") }

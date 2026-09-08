@@ -892,16 +892,16 @@ func TestSpecRoundTripSelfPropel(t *testing.T) {
 	o := launchOpts{
 		task: "coordinate", selfPropel: true, propelPrompt: "keep going",
 		propelDone: "./done.sh", propelMaxIdle: 5, propelBackoff: 2 * time.Second,
-		propelWatch: "notes/tasks.md",
+		propelWatch: "notes/tasks.md", propelMaxAutoTurns: 7,
 	}
 	sp := specFromOpts("pi", o, "g", "", "human")
 	if !sp.SelfPropel || sp.PropelPrompt != "keep going" || sp.PropelDone != "./done.sh" ||
-		sp.PropelMaxIdle != 5 || sp.PropelBackoff != "2s" || sp.PropelWatch != "notes/tasks.md" {
+		sp.PropelMaxIdle != 5 || sp.PropelBackoff != "2s" || sp.PropelWatch != "notes/tasks.md" || sp.PropelMaxAutoTurns != 7 {
 		t.Fatalf("self-propel not serialized: %+v", sp)
 	}
 	got := optsFromSpec(sp)
 	if !got.selfPropel || got.propelPrompt != "keep going" || got.propelDone != "./done.sh" ||
-		got.propelMaxIdle != 5 || got.propelBackoff != 2*time.Second || got.propelWatch != "notes/tasks.md" {
+		got.propelMaxIdle != 5 || got.propelBackoff != 2*time.Second || got.propelWatch != "notes/tasks.md" || got.propelMaxAutoTurns != 7 {
 		t.Fatalf("self-propel lost on restore: %+v", got)
 	}
 
@@ -920,13 +920,13 @@ func TestParseLaunchSelfPropel(t *testing.T) {
 	o, err := parseLaunch([]string{
 		"task", "--self-propel", "--propel-prompt", "go on",
 		"--done-check", "./chk.sh", "--max-idle-turns", "4", "--propel-backoff", "10s",
-		"--propel-watch", "notes/tasks.md",
+		"--propel-watch", "notes/tasks.md", "--max-auto-turns", "7",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !o.selfPropel || o.propelPrompt != "go on" || o.propelDone != "./chk.sh" ||
-		o.propelMaxIdle != 4 || o.propelBackoff != 10*time.Second || o.propelWatch != "notes/tasks.md" {
+		o.propelMaxIdle != 4 || o.propelBackoff != 10*time.Second || o.propelWatch != "notes/tasks.md" || o.propelMaxAutoTurns != 7 {
 		t.Fatalf("self-propel flags not parsed: %+v", o)
 	}
 

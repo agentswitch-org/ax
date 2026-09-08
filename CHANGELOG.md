@@ -4,6 +4,30 @@ All notable changes to ax are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- Automatic continuation now has a finite default budget: six submissions total
+  and three consecutive turns without workspace progress. `--max-auto-turns`
+  overrides the total. Error retries, worker wakeups, and lost-submit retries
+  share that budget; the count is persisted before sending input.
+- Progress tracks changed file contents, or the selected `--propel-watch`
+  artifact. Worker turnover and unchanged-file touches no longer count.
+- `ax coordinate` defaults to 250,000 run tokens and a 30-minute timeout, with
+  explicit launch flags overriding both. Its bundled behavior is shorter and
+  uses coherent deliverables, decision events, and bounded targeted repairs.
+
+### Fixed
+
+- A failed acceptance check cannot be overridden by a completion sentinel in a
+  self-propelled run. Failed checks feed bounded evidence into the next prompt;
+  `PROJECT-BLOCKED` stops instead of triggering another continuation.
+- Self-propelled Claude Stop hooks no longer prematurely conclude a task or
+  close its holder. Budget failures produce a failed result with `fail_reason`.
+- Automatic retry settings survive remote launch forwarding, and a human wait
+  or an acknowledged active turn cannot trigger a lost-submit retry.
+
 ## 0.1.4 - 2026-09-05
 
 ### Fixed

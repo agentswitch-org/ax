@@ -106,12 +106,13 @@ type launchOpts struct {
 	// or capped. Opt-in via --self-propel. pi/codex pump on their transcript's
 	// turn end; claude pumps on its Stop hook's terminal marker; a harness with
 	// neither signal (opencode) refuses the flag. See internal/propel.
-	selfPropel    bool
-	propelPrompt  string        // --propel-prompt: the continue-prompt injected each idle turn
-	propelDone    string        // --propel-until / --done-check: shell cmd, exit 0 => project complete
-	propelMaxIdle int           // --max-idle-turns: consecutive no-progress turns before stopping
-	propelBackoff time.Duration // --propel-backoff: delay before re-injecting an idle session
-	propelWatch   string        // --propel-watch: file whose mtime change counts as progress
+	selfPropel         bool
+	propelPrompt       string        // --propel-prompt: the continue-prompt injected each idle turn
+	propelDone         string        // --propel-until / --done-check: shell cmd, exit 0 => project complete
+	propelMaxIdle      int           // --max-idle-turns: consecutive no-progress turns before stopping
+	propelMaxAutoTurns int           // --max-auto-turns: total automatic submissions, regardless of progress
+	propelBackoff      time.Duration // --propel-backoff: delay before re-injecting an idle session
+	propelWatch        string        // --propel-watch: file whose content defines progress
 }
 
 // launchCtx carries the run-identity a restart pins onto a relaunch. For a normal
@@ -295,6 +296,27 @@ func remoteLaunchArgv(harness string, o launchOpts, headless bool) []string {
 	}
 	if o.dir != "" {
 		args = append(args, "--dir", o.dir)
+	}
+	if o.selfPropel {
+		args = append(args, "--self-propel")
+	}
+	if o.propelPrompt != "" {
+		args = append(args, "--propel-prompt", o.propelPrompt)
+	}
+	if o.propelDone != "" {
+		args = append(args, "--propel-until", o.propelDone)
+	}
+	if o.propelMaxIdle > 0 {
+		args = append(args, "--max-idle-turns", strconv.Itoa(o.propelMaxIdle))
+	}
+	if o.propelMaxAutoTurns > 0 {
+		args = append(args, "--max-auto-turns", strconv.Itoa(o.propelMaxAutoTurns))
+	}
+	if o.propelBackoff > 0 {
+		args = append(args, "--propel-backoff", o.propelBackoff.String())
+	}
+	if o.propelWatch != "" {
+		args = append(args, "--propel-watch", o.propelWatch)
 	}
 	if len(o.hflags) > 0 {
 		args = append(args, "--")
@@ -1227,12 +1249,13 @@ func specFromOpts(harness string, o launchOpts, group, parent, origin string) *m
 		CleanEnv: o.cleanEnv, Env: o.envSet, Auth: o.auth,
 		MaxCost: o.fen.maxCost, MaxTokens: o.fen.maxTokens,
 		MaxWorkers: o.fen.maxWorkers, MaxDepth: o.fen.maxDepth,
-		Effort:        o.effort,
-		SelfPropel:    o.selfPropel,
-		PropelPrompt:  o.propelPrompt,
-		PropelDone:    o.propelDone,
-		PropelMaxIdle: o.propelMaxIdle,
-		PropelWatch:   o.propelWatch,
+		Effort:             o.effort,
+		SelfPropel:         o.selfPropel,
+		PropelPrompt:       o.propelPrompt,
+		PropelDone:         o.propelDone,
+		PropelMaxIdle:      o.propelMaxIdle,
+		PropelMaxAutoTurns: o.propelMaxAutoTurns,
+		PropelWatch:        o.propelWatch,
 	}
 	if o.fen.timeout > 0 {
 		sp.Timeout = o.fen.timeout.String()
@@ -1264,6 +1287,7 @@ func optsFromSpec(sp *meta.Spec) launchOpts {
 	o.effort = sp.Effort
 	o.selfPropel, o.propelPrompt, o.propelDone, o.propelMaxIdle = sp.SelfPropel, sp.PropelPrompt, sp.PropelDone, sp.PropelMaxIdle
 	o.propelWatch = sp.PropelWatch
+	o.propelMaxAutoTurns = sp.PropelMaxAutoTurns
 	if sp.PropelBackoff != "" {
 		o.propelBackoff, _ = time.ParseDuration(sp.PropelBackoff)
 	}
@@ -1781,6 +1805,12 @@ func parseLaunch(argv []string) (launchOpts, error) {
 				return o, fmt.Errorf("%s: invalid count %q", a, v)
 			}
 			o.propelMaxIdle = n
+		case "--max-auto-turns":
+			n, err := strconv.Atoi(v)
+			if err != nil || n <= 0 {
+				return o, fmt.Errorf("--max-auto-turns: expected a positive count, got %q", v)
+			}
+			o.propelMaxAutoTurns = n
 		case "--propel-backoff":
 			d, err := time.ParseDuration(v)
 			if err != nil || d < 0 {

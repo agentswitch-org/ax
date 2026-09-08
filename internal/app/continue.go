@@ -221,6 +221,7 @@ func (a App) runContinue(id string, o launchOpts) {
 		md.Outcome = ""
 		md.FailReason = ""
 		md.Exit = nil
+		md.PropelAutoTurns = 0
 		if o.closeOnDone && mode == "interactive" {
 			md.CloseOnDone = true
 		}
@@ -269,6 +270,7 @@ func (a App) continueLiveReuse(id, group string, o launchOpts) error {
 		m.FailReason = ""
 		m.Result = ""
 		m.Exit = nil
+		m.PropelAutoTurns = 0
 	})
 	// Clear the terminal hook marker so state.Terminal(id) is false again: an
 	// `ax wait` on the new task must block until it concludes, not return

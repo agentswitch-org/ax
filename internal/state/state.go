@@ -195,8 +195,9 @@ const (
 	Live  = "live"  // fresh heartbeat: running now
 	Crash = "crash" // a stale heartbeat: was running, died (recovery candidate)
 
-	Working = "working" // produced terminal output recently
-	Idle    = "idle"    // live but quiet (waiting for the user)
+	Working   = "working"    // produced terminal output recently
+	Idle      = "idle"       // live but quiet (waiting for the user)
+	TurnEnded = "turn-ended" // provisional Stop hook; self-propel still owns the task verdict
 
 	LifecycleLive      = "live"
 	LifecycleConcluded = "concluded"

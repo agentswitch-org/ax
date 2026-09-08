@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/agentswitch-org/ax/behaviors"
 	"github.com/agentswitch-org/ax/internal/config"
@@ -71,6 +72,14 @@ func coordinateOpts(cfg config.Config, h config.Harness, o launchOpts, small boo
 	}
 	if o.fen.maxDepth == 0 {
 		o.fen.maxDepth = 2
+	}
+	// A bounded project run must also stop if the harness stays inside one
+	// long turn or wakes itself through worker notifications rather than propel.
+	if o.fen.maxTokens == 0 {
+		o.fen.maxTokens = 250000
+	}
+	if o.fen.timeout == 0 {
+		o.fen.timeout = 30 * time.Minute
 	}
 	o.keepLive = true
 	o.attach = true
@@ -171,8 +180,8 @@ func coordinateUsage(w *os.File) {
 
 Launch a self-propelled coordinator for the project in the current directory
 (or --dir D). It triages the goal into .coordinator/backlog.md, delegates work
-to tracked workers, verifies results, and keeps going until the project is
-done or it genuinely needs you.
+to tracked workers, verifies results, and stops when the goal is done, blocked,
+or a run budget is exhausted.
 
   --harness H   harness to run the coordinator on (default: default_harness,
                 else claude)
@@ -183,5 +192,7 @@ done or it genuinely needs you.
 Defaults: bundled coordinator behavior (materialized into behaviors_dir on
 first use), --write './.coordinator/**/*.md' --no-subagents --fence best-effort
 --max-workers 2 --max-depth 2 --keep-live --self-propel --attach.
+Run budgets: --max-tokens 250000 (including cached tokens) --timeout 30m.
+Automatic continuation defaults: --max-auto-turns 6 --max-idle-turns 3.
 `)
 }

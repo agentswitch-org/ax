@@ -345,7 +345,7 @@ func TestNoCapWhileLiveWorkers(t *testing.T) {
 // TestWatchdogAdvancesCap: an inject that produces no transcript activity within
 // the watchdog window is a lost submit. Each stall counts as an idle turn (and
 // retries the inject), so the cap still advances and `ax wait` never hangs,
-// while transcript activity restarts the window (a running turn is not a stall).
+// while transcript activity disarms the watchdog (a running turn is not a stall).
 func TestWatchdogAdvancesCap(t *testing.T) {
 	h := newHarness(Config{Prompt: "GO", MaxIdle: 2, Watchdog: time.Minute})
 	h.p.OnTurnEnd() // injects; arms the watchdog
@@ -353,13 +353,6 @@ func TestWatchdogAdvancesCap(t *testing.T) {
 
 	if act := h.p.Tick(); act != ActionNoop {
 		t.Fatalf("Tick inside the window: got %v, want ActionNoop", act)
-	}
-	// Transcript activity restarts the window: the submit clearly landed.
-	h.now = h.now.Add(50 * time.Second)
-	h.p.NoteActivity()
-	h.now = h.now.Add(50 * time.Second)
-	if act := h.p.Tick(); act != ActionNoop {
-		t.Fatalf("Tick after activity restarted the window: got %v, want ActionNoop", act)
 	}
 	// A full silent window: stall #1 counts as an idle turn and retries the inject.
 	h.now = h.now.Add(time.Minute)
@@ -435,8 +428,8 @@ func TestPromptOverrideAndGenericDefault(t *testing.T) {
 	}
 	h := newHarness(Config{Prompt: ConfigFromSpec(&meta.Spec{SelfPropel: true}).Prompt, MaxIdle: 3})
 	h.p.OnTurnEnd()
-	if gotW := string(h.written); gotW != DefaultPrompt+"\r" {
-		t.Fatalf("default inject = %q, want DefaultPrompt", gotW)
+	if gotW := string(h.written); !strings.Contains(gotW, DefaultPrompt) || !strings.Contains(gotW, "Automatic continuation 1/6") {
+		t.Fatalf("default inject lacks instructions or finite budget: %q", gotW)
 	}
 	for _, banned := range []string{"coordin" + "ator", "back" + "log"} {
 		if strings.Contains(strings.ToLower(DefaultPrompt), banned) {
