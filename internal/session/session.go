@@ -104,11 +104,11 @@ func IndexReadOnly(cfg config.Config) []Session {
 
 func index(cfg config.Config, persist bool) []Session {
 	cache := loadIndexCache()
-	fresh := map[string]cacheEntry{}
-	dirty := false
-	var out []Session
-	seenID := map[string]bool{} // dedupe an id across stores; the primary store wins
+	seenPaths := make(map[string]struct{}, len(cache))
+	var changed map[string]cacheEntry
+	out := make([]Session, 0, len(cache))
 	for _, h := range cfg.Harnesses {
+		seenID := map[string]bool{} // primary wins across stores of this harness
 		re, err := regexp.Compile(h.IDRe)
 		reOK := err == nil
 		var idIdx int
@@ -121,7 +121,7 @@ func index(cfg config.Config, persist bool) []Session {
 					s.Harness = h.Name
 					s.Store = store.Label
 					s.Dir = config.TranslateCwd(store, s.Dir)
-					if store.Label != "" && seenID[s.ID] {
+					if seenID[s.ID] {
 						continue
 					}
 					seenID[s.ID] = true
@@ -135,18 +135,18 @@ func index(cfg config.Config, persist bool) []Session {
 			matches, _ := filepath.Glob(store.Glob)
 			for _, path := range matches {
 				st, err := os.Stat(path)
-				if err != nil {
+				if err != nil || st.IsDir() {
 					continue
 				}
 				mt := st.ModTime().UnixNano()
-				if e, ok := cache[path]; ok && e.MTime == mt {
-					if store.Label != "" && seenID[e.Sess.ID] {
-						fresh[path] = e
+				if e, ok := cache[path]; ok && e.MTime == mt && e.Size == st.Size() && e.Format == h.Format && e.IDRe == h.IDRe {
+					seenPaths[path] = struct{}{}
+					delete(changed, path) // the last configured parser owns this cache entry
+					if seenID[e.Sess.ID] {
 						continue
 					}
 					seenID[e.Sess.ID] = true
-					fresh[path] = e
-					out = append(out, e.Sess)
+					out = append(out, inStore(e.Sess, h, store))
 					continue
 				}
 				// Match the id_regex against a forward-slash form of the path: the
@@ -161,28 +161,41 @@ func index(cfg config.Config, persist bool) []Session {
 				if s == nil {
 					continue
 				}
-				s.Harness = h.Name
-				s.Store = store.Label
 				if s.ID == "" {
 					s.ID = m[idIdx]
 				}
-				s.Dir = config.TranslateCwd(store, s.Dir)
-				fresh[path] = cacheEntry{MTime: mt, Sess: *s}
-				dirty = true // a transcript was (re)parsed
-				// A foreign store never shadows a session already seen in the
-				// primary store (the same id federated across the boundary).
-				if store.Label != "" && seenID[s.ID] {
+				seenPaths[path] = struct{}{}
+				if persist {
+					if changed == nil {
+						changed = make(map[string]cacheEntry, len(cache)+1)
+					}
+					changed[path] = cacheEntry{MTime: mt, Size: st.Size(), Format: h.Format, IDRe: h.IDRe, Sess: *s}
+				}
+				// A copied session in another store never shadows the primary.
+				if seenID[s.ID] {
 					continue
 				}
 				seenID[s.ID] = true
-				out = append(out, *s)
+				out = append(out, inStore(*s, h, store))
 			}
 		}
 	}
 	// Rewrite the cache only when something changed: pollers (fence watchers,
 	// group follows) call Index every few seconds, and marshalling hundreds of
 	// KB to disk each tick for an identical cache is pure waste.
-	if persist && (dirty || len(fresh) != len(cache)) {
+	if persist && (len(changed) > 0 || len(seenPaths) != len(cache)) {
+		// The loaded cache is immutable and shared with other scans. Only build
+		// a replacement when files changed or disappeared; a warm refresh needs
+		// a set of paths, not another full map of parsed Session values.
+		fresh := changed
+		if fresh == nil {
+			fresh = make(map[string]cacheEntry, len(seenPaths))
+		}
+		for path := range seenPaths {
+			if _, updated := fresh[path]; !updated {
+				fresh[path] = cache[path]
+			}
+		}
 		saveIndexCache(fresh)
 	}
 	// Merge the control-layer metadata sidecar (name/task/group/parent/...), read
@@ -249,6 +262,14 @@ func index(cfg config.Config, persist bool) []Session {
 	return out
 }
 
+// Store labels and cwd translation belong to this scan's configuration, not
+// the transcript cache: changing a store must take effect without a file edit.
+func inStore(s Session, h config.Harness, store config.Store) Session {
+	s.Harness, s.Store = h.Name, store.Label
+	s.Dir = config.TranslateCwd(store, s.Dir)
+	return s
+}
+
 func metaOnlyVisible(id string, m meta.Meta, beat map[string]live.Entry) bool {
 	if e, ok := beat[id]; ok && live.Running(e) {
 		return true
@@ -288,14 +309,18 @@ func extractText(raw json.RawMessage) string {
 		Text string `json:"text"`
 	}
 	if json.Unmarshal(raw, &blocks) == nil {
-		// First block carrying text. Covers claude's {type:text}, codex's
-		// {type:input_text/output_text}, and similar shapes; tool-call blocks
-		// have no text and are skipped.
+		// Messages may contain several text blocks separated by tool calls.
+		// Keep every readable block so previews and search do not drop content.
+		var text strings.Builder
 		for _, b := range blocks {
-			if strings.TrimSpace(b.Text) != "" {
-				return strings.TrimSpace(b.Text)
+			if part := strings.TrimSpace(b.Text); part != "" {
+				if text.Len() > 0 {
+					text.WriteByte('\n')
+				}
+				text.WriteString(part)
 			}
 		}
+		return text.String()
 	}
 	return ""
 }
@@ -641,31 +666,43 @@ type Turn struct {
 
 // RecentText returns up to the last n user/assistant turns with readable text.
 func RecentText(format, path string, n int) []Turn {
-	turns := allTurns(format, path)
-	if len(turns) > n {
-		turns = turns[len(turns)-n:]
+	if n <= 0 {
+		return nil
 	}
-	return turns
+	var turns []Turn
+	next := 0
+	walkTurns(format, path, func(t Turn) {
+		if len(turns) < n {
+			turns = append(turns, t)
+			return
+		}
+		turns[next] = t
+		next = (next + 1) % n
+	})
+	if next == 0 {
+		return turns
+	}
+	ordered := append(make([]Turn, 0, len(turns)), turns[next:]...)
+	return append(ordered, turns[:next]...)
 }
 
 // FullText concatenates every readable turn, for the content-search sidecar.
 func FullText(format, path string) string {
 	var b strings.Builder
-	for _, t := range allTurns(format, path) {
+	walkTurns(format, path, func(t Turn) {
 		b.WriteString(t.Text)
 		b.WriteByte('\n')
-	}
+	})
 	return b.String()
 }
 
-func allTurns(format, path string) []Turn {
+func walkTurns(format, path string, emit func(Turn)) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		return
 	}
 	defer f.Close()
 
-	var turns []Turn
 	dec := json.NewDecoder(f)
 	for {
 		var raw struct {
@@ -723,10 +760,9 @@ func allTurns(format, path string) []Turn {
 			continue
 		}
 		if txt := extractText(content); txt != "" {
-			turns = append(turns, Turn{Role: role, Text: txt, Time: parseTime(raw.Timestamp)})
+			emit(Turn{Role: role, Text: txt, Time: parseTime(raw.Timestamp)})
 		}
 	}
-	return turns
 }
 
 // skipBadToken advances the decoder past one offending token so a single

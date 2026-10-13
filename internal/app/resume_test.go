@@ -1,11 +1,13 @@
 package app
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/agentswitch-org/ax/internal/config"
 	"github.com/agentswitch-org/ax/internal/session"
+	"github.com/agentswitch-org/ax/internal/shell"
 )
 
 func claudeHarness() config.Harness {
@@ -15,6 +17,34 @@ func claudeHarness() config.Harness {
 		Resume: "cd {dir} && claude --resume {id} --model {model} {args}",
 		Launch: "claude --session-id {newid} {args}",
 		Args:   "--dangerously-skip-permissions",
+	}
+}
+
+func TestResumeUsesTranscriptStoreHome(t *testing.T) {
+	for _, tc := range []struct {
+		format, variable, pattern, file string
+	}{
+		{"codex", "CODEX_HOME", "sessions/*/*/*/rollout-*.jsonl", "sessions/2026/10/12/rollout-chat.jsonl"},
+		{"claude", "CLAUDE_CONFIG_DIR", "projects/*/*.jsonl", "projects/project/chat.jsonl"},
+		{"pi", "PI_CODING_AGENT_DIR", "sessions/*/*.jsonl", "sessions/project/chat.jsonl"},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			primary := filepath.Join(t.TempDir(), "primary")
+			secondary := filepath.Join(t.TempDir(), "second account's home")
+			h := config.Harness{Name: tc.format, Format: tc.format, Resume: "harness --resume {id}",
+				Glob: config.StringList{filepath.Join(primary, filepath.FromSlash(tc.pattern)), filepath.Join(secondary, filepath.FromSlash(tc.pattern))}}
+			s := session.Session{ID: "chat", File: filepath.Join(secondary, filepath.FromSlash(tc.file))}
+			want := shell.InheritEnv([]shell.Op{shell.SetLiteral(tc.variable, secondary)}, "harness --resume "+shell.Quote("chat"))
+			if got := resumeCmd(h, s, nil); got != want {
+				t.Fatalf("resume used the wrong home:\n got %s\nwant %s", got, want)
+			}
+			// Cross-OS runtime selection is separate from discovery. Do not
+			// inject a host path into a foreign executable's environment.
+			h.Stores = []config.Store{{Glob: h.Glob[1], Label: "win"}}
+			if got := resumeCmd(h, s, nil); strings.Contains(got, tc.variable) {
+				t.Fatalf("foreign-store resume received a native home override: %s", got)
+			}
+		})
 	}
 }
 

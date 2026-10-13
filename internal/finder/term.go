@@ -3,6 +3,7 @@ package finder
 import (
 	"bufio"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -193,14 +194,15 @@ func resumeInput() (*os.File, chan ev, error) {
 // (raw mode, key reads); out is the output side (frames, cursor control,
 // measurement). On unix both are /dev/tty; on Windows they are CONIN$/CONOUT$.
 type screen struct {
-	tty    *os.File
-	out    *os.File
-	old    *termState
-	rows   int
-	cols   int
-	events chan ev
-	resize chan struct{}
-	done   chan struct{}
+	tty       *os.File
+	out       *os.File
+	old       *termState
+	rows      int
+	cols      int
+	events    chan ev
+	resize    chan struct{}
+	done      chan struct{}
+	lastFrame []string
 }
 
 // reportingModeResets defensively disables the terminal reporting modes a
@@ -307,6 +309,7 @@ func (s *screen) resume() error {
 	s.tty, s.old, s.events = tty, sharedOld, events
 	s.measure()
 	s.out.WriteString(screenEnter)
+	s.lastFrame = nil
 	return nil
 }
 
@@ -321,6 +324,9 @@ func (s *screen) measure() {
 
 // render writes the frame: home, each line cleared to EOL, then clear below.
 func (s *screen) render(lines []string) {
+	if slices.Equal(s.lastFrame, lines) {
+		return
+	}
 	var b strings.Builder
 	b.WriteString("\x1b[H")
 	for i, ln := range lines {
@@ -331,7 +337,9 @@ func (s *screen) render(lines []string) {
 		}
 	}
 	b.WriteString("\x1b[0J")
-	s.out.WriteString(b.String())
+	if _, err := s.out.WriteString(b.String()); err == nil {
+		s.lastFrame = append(s.lastFrame[:0], lines...)
+	}
 }
 
 func restoreSharedOutputMode() {

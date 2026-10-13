@@ -4,6 +4,7 @@
 package search
 
 import (
+	"bufio"
 	"os"
 	"os/exec"
 	"strconv"
@@ -38,19 +39,25 @@ func (inproc) Matches(query string, files []string, perFile int) map[string][]in
 	q := strings.ToLower(query)
 	res := map[string][]int{}
 	for _, f := range files {
-		data, err := os.ReadFile(f)
+		file, err := os.Open(f)
 		if err != nil {
 			continue
 		}
 		hits := 0
-		for i, line := range strings.Split(string(data), "\n") {
+		reader := bufio.NewReader(file)
+		for i := 1; ; i++ {
+			line, err := reader.ReadString('\n')
 			if strings.Contains(strings.ToLower(line), q) {
-				res[f] = append(res[f], i+1)
+				res[f] = append(res[f], i)
 				if hits++; perFile > 0 && hits >= perFile {
 					break
 				}
 			}
+			if err != nil {
+				break
+			}
 		}
+		file.Close()
 	}
 	return res
 }
@@ -62,7 +69,7 @@ func (ripgrep) Matches(query string, files []string, perFile int) map[string][]i
 	if query == "" || len(files) == 0 {
 		return nil
 	}
-	args := []string{"-n", "-H", "-i", "-F"}
+	args := []string{"-n", "-H", "-i", "-F", "--null"}
 	if perFile > 0 {
 		args = append(args, "-m", strconv.Itoa(perFile))
 	}
@@ -70,18 +77,30 @@ func (ripgrep) Matches(query string, files []string, perFile int) map[string][]i
 	args = append(args, files...)
 	out, _ := exec.Command("rg", args...).Output()
 	res := map[string][]int{}
-	for _, m := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
-		if file, line, ok := splitMatch(m); ok {
+	rest := string(out)
+	for rest != "" {
+		// A NUL separates the path from line:text; unlike a colon/newline it
+		// cannot occur in a filename (including a Windows drive path).
+		path, body, ok := strings.Cut(rest, "\x00")
+		if !ok {
+			break
+		}
+		record, tail, _ := strings.Cut(body, "\n")
+		rest = tail
+		if file, line, ok := splitMatch(path + "\x00" + record); ok {
 			res[file] = append(res[file], line)
 		}
 	}
 	return res
 }
 
-// splitMatch parses ripgrep's "path:line:text". Paths here are absolute with no
-// colons, so the first two colons delimit the fields.
+// splitMatch parses ripgrep's "path<NUL>line:text". The colon-delimited form
+// remains accepted for older callers, but --null keeps real paths unambiguous.
 func splitMatch(m string) (file string, line int, ok bool) {
-	a := strings.IndexByte(m, ':')
+	a := strings.IndexByte(m, 0)
+	if a < 0 {
+		a = strings.IndexByte(m, ':')
+	}
 	if a < 0 {
 		return "", 0, false
 	}

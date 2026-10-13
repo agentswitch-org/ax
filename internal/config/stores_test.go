@@ -1,10 +1,48 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestLoadCopiedDefaultStoreKeepsDiscovery(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", filepath.Join(root, "relocated"))
+	path := filepath.Join(root, "config.toml")
+	t.Setenv("AX_CONFIG", path)
+	for _, tc := range []struct {
+		name, glob string
+		auto       bool
+	}{
+		{"copied default", "~/.codex/sessions/*/*/*/rollout-*.jsonl", true},
+		{"expanded default", ExpandHome("~/.codex/sessions/*/*/*/rollout-*.jsonl"), true},
+		{"custom location", filepath.Join(root, "custom", "*.jsonl"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := fmt.Sprintf("[[harness]]\nname = 'codex'\nglob = %q\n", tc.glob)
+			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, h := range cfg.Harnesses {
+				if h.Name != "codex" {
+					continue
+				}
+				got := h.PrimaryStore()
+				if (got.Source == "env:CODEX_HOME") != tc.auto {
+					t.Fatalf("primary store = %+v, want automatic discovery %v", got, tc.auto)
+				}
+				return
+			}
+			t.Fatal("codex harness missing")
+		})
+	}
+}
 
 func boolp(b bool) *bool { return &b }
 

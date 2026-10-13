@@ -11,16 +11,19 @@ import (
 
 // Transcripts can total hundreds of MB, so parsing every one on each launch is
 // the dominant startup cost. The index cache stores each parsed Session keyed by
-// file path and mtime; unchanged files are served from cache without reparsing.
+// file path, format, mtime, and size; unchanged files need no reparse.
 
 // cacheVersion invalidates the whole cache when the parser changes how a Session
 // is derived (a bump makes every transcript reparse once). Bump it whenever the
 // meaning of a cached field changes, e.g. how Dir is chosen.
-const cacheVersion = 7
+const cacheVersion = 8
 
 type cacheEntry struct {
-	MTime int64   `json:"m"`
-	Sess  Session `json:"s"`
+	MTime  int64   `json:"m"`
+	Size   int64   `json:"z"`
+	Format string  `json:"f"`
+	IDRe   string  `json:"r"`
+	Sess   Session `json:"s"`
 }
 
 type indexCache struct {
@@ -42,7 +45,9 @@ func indexCachePath() string {
 // shared reference is safe.
 var loaded struct {
 	sync.Mutex
+	path    string
 	mtime   int64
+	size    int64
 	entries map[string]cacheEntry
 }
 
@@ -52,13 +57,14 @@ func loadIndexCache() map[string]cacheEntry {
 	defer loaded.Unlock()
 	if fi, err := os.Stat(p); err == nil {
 		mt := fi.ModTime().UnixNano()
-		if loaded.entries != nil && loaded.mtime == mt {
+		if loaded.entries != nil && loaded.path == p && loaded.mtime == mt && loaded.size == fi.Size() {
 			return loaded.entries
 		}
 		if data, err := os.ReadFile(p); err == nil {
 			var c indexCache
 			if json.Unmarshal(data, &c) == nil && c.Version == cacheVersion && c.Entries != nil {
 				loaded.entries, loaded.mtime = c.Entries, mt
+				loaded.path, loaded.size = p, fi.Size()
 				return c.Entries
 			}
 		}
@@ -77,14 +83,13 @@ func saveIndexCache(m map[string]cacheEntry) {
 	// runs on nearly every invocation (Index caches here), so it self-heals.
 	os.Chmod(filepath.Dir(p), 0o700)
 	if data, err := json.Marshal(indexCache{Version: cacheVersion, Entries: m}); err == nil {
-		os.WriteFile(p, data, 0o600)
-		// Retain what we just wrote so the next loadIndexCache in this process
-		// skips the disk round-trip and unmarshal.
-		loaded.Lock()
-		loaded.entries = m
-		if fi, err := os.Stat(p); err == nil {
-			loaded.mtime = fi.ModTime().UnixNano()
+		if axdir.WriteFileAtomic(p, data, 0o600) != nil {
+			return
 		}
+		// Another process can replace the file immediately after our rename.
+		// Reload once instead of associating our map with its file timestamp.
+		loaded.Lock()
+		loaded.entries = nil
 		loaded.Unlock()
 	}
 }

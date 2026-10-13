@@ -83,10 +83,11 @@ type previewResult struct {
 	rev   previewRevision
 }
 
-// searchResult carries a finished remote content search back to the UI goroutine.
+// searchResult carries a finished content search back to the UI goroutine.
 type searchResult struct {
 	query string
 	hits  map[string]bool
+	local bool
 }
 
 type archiveEdit struct {
@@ -198,12 +199,20 @@ type picker struct {
 	matchLines   []int                      // content-mode match line numbers
 	matchIdx     int
 
-	remoteHits  map[string]bool   // remote session keys matching remoteQuery
-	remoteQuery string            // the content query remoteHits is for
-	searchReady chan searchResult // completed remote content searches
-	cs          *time.Timer       // remote content-search debounce
-	ls          *time.Timer       // local content-search debounce (rg per keystroke is not free)
-	searcher    search.Searcher   // built once; LookPath per keystroke is not free either
+	remoteHits          map[string]bool   // remote session keys matching remoteQuery
+	remoteQuery         string            // the content query remoteHits is for
+	searchReady         chan searchResult // completed remote content searches
+	cs                  *time.Timer       // remote content-search debounce
+	ls                  *time.Timer       // local content-search debounce (rg per keystroke is not free)
+	searcher            search.Searcher   // built once; LookPath per keystroke is not free either
+	localHits           map[string]bool
+	localQuery          string
+	localSearchInFlight bool
+	localSearchAgain    bool
+	contentReady        chan contentPreviewResult
+	contentInFlight     bool
+	contentPreview      *contentPreviewResult
+	done                chan struct{}
 
 	metaReady    chan map[string]view.RowMeta // completed background meta refreshes
 	metaInFlight bool                         // one refresh at a time
@@ -225,6 +234,8 @@ func (p *picker) run() (Choice, error) {
 	}
 	p.sc = sc
 	defer sc.close()
+	p.done = make(chan struct{})
+	defer close(p.done)
 
 	p.marks = map[string]bool{}
 	p.collapsed = map[string]bool{}
@@ -235,6 +246,7 @@ func (p *picker) run() (Choice, error) {
 	p.previewReady = make(chan previewResult, 4)
 	p.remoteHits = map[string]bool{}
 	p.searchReady = make(chan searchResult, 4)
+	p.contentReady = make(chan contentPreviewResult, 1)
 	p.cs = time.NewTimer(time.Hour)
 	p.cs.Stop()
 	defer p.cs.Stop()
@@ -289,8 +301,12 @@ func (p *picker) run() (Choice, error) {
 	pv.Stop()
 	defer pv.Stop()
 	ticks := 0
+	redraw := true
 	for {
-		p.sc.render(p.frameLines())
+		if redraw {
+			p.sc.render(p.frameLines())
+		}
+		redraw = true
 		select {
 		case e := <-sc.events:
 			if p.handle(e) {
@@ -327,14 +343,14 @@ func (p *picker) run() (Choice, error) {
 			// a preview finished loading: cache it, and show it if that row
 			// is still the one selected.
 			delete(p.fetching, pr.key)
-			p.previewCache[pr.key] = pr.lines
+			p.cachePreview(pr.key, pr.lines)
 			if pr.local {
 				if p.previewRev == nil {
 					p.previewRev = map[string]previewRevision{}
 				}
 				p.previewRev[pr.key] = pr.rev
 			}
-			if cur, ok := p.cur(); ok && session.Key(cur) == pr.key {
+			if cur, ok := p.cur(); ok && session.Key(cur) == pr.key && !(p.contentMode() && strings.TrimSpace(p.query) != "") {
 				p.preview = pr.lines
 				p.previewKey = pr.key
 				p.placePreview()
@@ -342,29 +358,28 @@ func (p *picker) run() (Choice, error) {
 		case <-p.cs.C:
 			p.kickRemoteSearch()
 		case <-p.ls.C: // local content search fires after typing pauses
-			p.recompute()
-			p.previewDirty = true
+			p.kickLocalSearch()
 		case m := <-p.metaReady:
 			p.applyMetaReady(m)
 		case rr := <-p.reindexReady:
 			p.reindexInFlight = false
 			p.applyReindex(rr)
 		case sr := <-p.searchReady:
-			// apply only if it is still the current query (drop stale in-flight ones)
-			if p.mode == mContent && sr.query == strings.TrimSpace(p.query) {
-				p.remoteHits = sr.hits
-				p.remoteQuery = sr.query
-				p.recompute()
-				p.previewDirty = true
-			}
+			p.applySearchResult(sr)
+		case pr := <-p.contentReady:
+			p.contentInFlight = false
+			p.contentPreview = &pr
+			p.previewDirty = true
 		case <-sc.resize:
+			p.sc.lastFrame = nil
 		case <-t.C:
 			ticks++
 			if ticks%7 == 0 { // ~1s: refresh live state so working->idle updates
 				p.refreshMeta()
 				p.kickReindex() // re-scan sessions/config on the same cadence (throttled)
 			}
-			if p.anyWorking() || p.loading {
+			redraw = p.anyWorking() || p.loading
+			if redraw {
 				p.frame++
 			}
 		}
@@ -1119,27 +1134,15 @@ func (p *picker) columnFilterTextFor(i, col int) string {
 	return t
 }
 
-// content keeps base sessions whose transcript matches query. Local transcripts
-// are searched in-process here; remote sessions have no local file, so they are
-// kept when their owning host reported a hit (remoteHits, fetched by the debounced
-// kickRemoteSearch for the current query).
+// content filters from completed searches only. Disk and transport work runs
+// outside the UI loop, and hits from a previous query cannot select a session.
 func (p *picker) content(base []int, query string) []int {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return base
 	}
-	files := make([]string, len(base))
-	var searchable []string
-	for k, i := range base {
-		f := view.TextFile(p.cfg, p.all[i])
-		files[k] = f
-		if f != "" {
-			searchable = append(searchable, f)
-		}
-	}
-	hits := p.searcher.Matches(query, searchable, 1)
 	var res []int
-	for k, i := range base {
+	for _, i := range base {
 		s := p.all[i]
 		if s.Host != "" { // remote: use the owner-reported hits for this exact query
 			if p.remoteQuery == query && p.remoteHits[session.Key(s)] {
@@ -1147,10 +1150,7 @@ func (p *picker) content(base []int, query string) []int {
 			}
 			continue
 		}
-		if files[k] == "" {
-			continue
-		}
-		if lns, ok := hits[files[k]]; ok && len(lns) > 0 {
+		if p.localQuery == query && p.localHits[session.Key(s)] {
 			res = append(res, i)
 		}
 	}
@@ -1166,9 +1166,10 @@ func (p *picker) refreshMeta() {
 	}
 	p.metaInFlight = true
 	all := append([]session.Session(nil), p.all...) // applySort mutates p.all in place
+	harnesses, remoteState := p.harnessSet(), p.remoteState
 	go func() {
-		loc := adopt.Locators(p.mx, all, p.harnessSet())
-		p.metaReady <- BuildMeta(all, loc, p.remoteState)
+		loc := adopt.Locators(p.mx, all, harnesses)
+		p.metaReady <- BuildMeta(all, loc, remoteState)
 	}()
 }
 
@@ -1254,6 +1255,9 @@ func (p *picker) applyReindex(rr reindexResult) {
 	p.applySort()
 	p.recomputeKeeping(ref)
 	p.refreshMeta() // recompute live state for the new set (new rows have no meta yet)
+	if p.contentMode() && p.ls != nil {
+		p.ls.Reset(120 * time.Millisecond)
+	}
 	p.previewDirty = true
 }
 
@@ -1445,24 +1449,8 @@ func (p *picker) buildPreview() {
 		p.previewKey = key
 	}
 	q := strings.TrimSpace(p.query)
-	if p.mode == mContent && q != "" {
-		data, _ := os.ReadFile(view.TextFile(p.cfg, s))
-		lines := strings.Split(string(data), "\n")
-		lq := strings.ToLower(q)
-		p.preview = make([]string, len(lines))
-		for i, ln := range lines {
-			ln = expandTabs(ln)
-			p.preview[i] = view.Highlight(ln, q)
-			if strings.Contains(strings.ToLower(ln), lq) {
-				p.matchLines = append(p.matchLines, i)
-			}
-		}
-		// Content search jumps to the first hit rather than the newest turn.
-		if len(p.matchLines) > 0 {
-			p.previewTop = max(p.matchLines[0]-2, 0)
-		} else {
-			p.previewTop = 0
-		}
+	if p.contentMode() && q != "" {
+		p.buildContentPreview(s, q)
 		return
 	}
 	if cached, ok := p.previewCache[key]; ok {
@@ -1479,7 +1467,7 @@ func (p *picker) buildPreview() {
 		return
 	}
 	lines, rev := p.localPreviewLines(s)
-	p.previewCache[key] = lines
+	p.cachePreview(key, lines)
 	if p.previewRev == nil {
 		p.previewRev = map[string]previewRevision{}
 	}
@@ -1637,7 +1625,7 @@ func sessionAdvanced(cur, fresh session.Session) bool {
 // armRemoteSearch (re)starts the content-search debounce after the query changes,
 // so remote hosts are searched once typing pauses rather than per keystroke.
 func (p *picker) armRemoteSearch() {
-	if p.mode != mContent || p.remoteSearch == nil {
+	if !p.contentMode() || p.remoteSearch == nil {
 		return
 	}
 	if !p.cs.Stop() {
@@ -1652,14 +1640,21 @@ func (p *picker) armRemoteSearch() {
 // kickRemoteSearch runs the content search on remote hosts for the current query,
 // off the UI goroutine; the result returns on searchReady. Fired by the debounce.
 func (p *picker) kickRemoteSearch() {
-	if p.mode != mContent || p.remoteSearch == nil {
+	if !p.contentMode() || p.remoteSearch == nil {
 		return
 	}
 	q := strings.TrimSpace(p.query)
 	if q == "" {
 		return
 	}
-	go func() { p.searchReady <- searchResult{q, p.remoteSearch(q)} }()
+	searchRemote := p.remoteSearch
+	go func() {
+		result := searchResult{query: q, hits: searchRemote(q)}
+		select {
+		case p.searchReady <- result:
+		case <-p.done:
+		}
+	}()
 }
 
 func expandTabs(s string) string { return strings.ReplaceAll(s, "\t", "    ") }
@@ -2157,6 +2152,8 @@ func (p *picker) queryChanged() {
 	if p.mode == mContent {
 		p.ls.Reset(120 * time.Millisecond)
 		p.armRemoteSearch()
+		p.recompute()
+		p.previewDirty = true
 		return
 	}
 	p.recompute()
@@ -3249,6 +3246,7 @@ func (p *picker) confirmBox(msg string, yes bool) []string {
 // showHelp pauses the picker, draws the help screen (with the live keymap so it
 // shows the keys actually in effect), and waits for a key.
 func (p *picker) showHelp() {
+	p.sc.lastFrame = nil // help writes directly, outside the cached frame renderer
 	p.sc.out.WriteString("\x1b[2J\x1b[H" + strings.ReplaceAll(view.Help(p.km, hold.DetachLabel(p.cfg.DetachPrefix, p.cfg.DetachKey), p.sc.rows, p.sc.cols), "\n", "\r\n"))
 	<-p.sc.events
 }

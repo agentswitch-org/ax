@@ -4,6 +4,42 @@ All notable changes to ax are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 0.1.6 - 2026-10-13
+
+### Changed
+
+- Reuse fuzzy-scoring buffers, skip unchanged terminal frames, and reuse the
+  initial local scan when remote hosts report. Picker loading no longer runs
+  worker repair and retention maintenance.
+- Transcript content searches and previews run off the input loop with bounded
+  local concurrency. The fallback searcher reads lines and stops at its hit cap.
+- Recent previews retain only the requested turns while parsing. Preview caching
+  is bounded to 32 entries and 8 MiB of text, except for one oversized preview.
+- Unchanged index refreshes track paths without copying the full parsed-session cache.
+
+### Fixed
+
+- Copying a built-in store path into config no longer disables relocation-env
+  and WSL store discovery. Custom store paths still override auto-discovery.
+- Recognized local Claude/Codex/pi file stores resume with their owning home; Claude
+  transcript relocation stays in that store instead of the primary one.
+- Index caching checks transcript size, format, and ID pattern as well as modification time,
+  reapplies current store labels/path translation, and replaces its file atomically.
+- Duplicate chats across local stores resolve to the primary copy. Deduplication
+  no longer hides a different harness's session with the same ID.
+- Windows WSL discovery decodes Unicode distro names, includes root's home, and
+  enumerates only running distros to avoid starting stopped ones during navigation.
+- Transcript text preserves all message text blocks. Search sidecars are replaced
+  atomically and invalidated when the parser format changes.
+- Ripgrep search results support Windows drive paths and filenames containing colons
+  or newlines. Pending content searches still complete after committing the query.
+
+### Known limitations
+
+- Cross-OS resume routing is unchanged. The reported missing-session issue on an
+  affected WSL installation still needs verification there; the discovery fixes
+  have regression coverage but have not been tested on that user's machine.
+
 ## 0.1.5 - 2026-09-08
 
 ### Added

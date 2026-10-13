@@ -91,6 +91,31 @@ func TestRelocateIgnoresGlobalStores(t *testing.T) {
 	}
 }
 
+func TestRelocateStaysInOwningStore(t *testing.T) {
+	primary := filepath.Join(t.TempDir(), "primary", "projects")
+	secondary := filepath.Join(t.TempDir(), "secondary", "projects")
+	h := config.Harness{Name: "claude", Format: "claude", Glob: config.StringList{
+		filepath.Join(primary, "*", "*.jsonl"), filepath.Join(secondary, "*", "*.jsonl"),
+	}}
+	old := filepath.Join(secondary, "-old")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(old, "chat.jsonl")
+	if err := os.WriteFile(file, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Relocate(h, Session{ID: "chat", File: file, Dir: "/new"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(secondary, "-new", "chat.jsonl")); err != nil {
+		t.Fatalf("session left its owning store: %v", err)
+	}
+	if _, err := os.Stat(primary); !os.IsNotExist(err) {
+		t.Fatalf("resume touched the primary store: %v", err)
+	}
+}
+
 func TestClaudeMangleMatchesClaude(t *testing.T) {
 	for in, want := range map[string]string{
 		"/Users/x/src/agentswitch-org/ax": "-Users-x-src-agentswitch-org-ax",

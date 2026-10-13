@@ -98,20 +98,23 @@ func score(query, text []rune, fold bool) float64 {
 	// M[j]: best score for query[:i+1] using text[:j+1] (last char at or before j).
 	D := make([]float64, m)
 	M := make([]float64, m)
-	var prevD, prevM []float64
 	for i := 0; i < n; i++ {
 		prevScore := scoreMin
+		// Keep the previous row's left cell before overwriting this row in
+		// place. Scoring needs only that diagonal, not a new pair of buffers.
+		leftD, leftM := scoreMin, scoreMin
 		gap := scoreGapInner
 		if i == n-1 {
 			gap = scoreGapTrailing
 		}
 		for j := 0; j < m; j++ {
+			oldD, oldM := D[j], M[j]
 			if eq(query[i], text[j], fold) {
 				s := scoreMin
 				if i == 0 {
 					s = float64(j)*scoreGapLeading + bonus[j]
 				} else if j > 0 {
-					s = math.Max(prevM[j-1]+bonus[j], prevD[j-1]+scoreMatchConsecutive)
+					s = math.Max(leftM+bonus[j], leftD+scoreMatchConsecutive)
 				}
 				D[j] = s
 				prevScore = math.Max(s, prevScore+gap)
@@ -121,11 +124,10 @@ func score(query, text []rune, fold bool) float64 {
 				prevScore = prevScore + gap
 				M[j] = prevScore
 			}
+			leftD, leftM = oldD, oldM
 		}
-		prevD, prevM = D, M
-		D, M = make([]float64, m), make([]float64, m)
 	}
-	return prevM[m-1]
+	return M[m-1]
 }
 
 // precomputeBonus scores each position by the character preceding it, so matches

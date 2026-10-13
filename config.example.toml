@@ -145,16 +145,16 @@
 # launch = "myagent"
 
 # Transcript stores: glob (and opencode's db) accept ONE path or a LIST. The
-# first entry is the PRIMARY store (where the harness reads/writes and the one a
-# resume is served from); every further entry is an extra store ax also indexes
-# (an old location, a second account). Both are machine-local, like a single
-# glob, and excluded from `ax config sync`.
+# first entry is the PRIMARY store; further entries are also indexed (an old
+# location, a second account). Recognized local Claude/Codex/pi file layouts resume
+# with the owning store's home environment variable. Paths are machine-local
+# and excluded from `ax config sync`.
 # [[harness]]
 # name = "claude"
 # glob = ["~/.claude/projects/*/*.jsonl", "~/.claude-work/projects/*/*.jsonl"]
 
-# Auto-discovered stores (default on). With no explicit glob for a built-in
-# harness, ax also indexes:
+# Auto-discovered stores (default on). With a built-in store path (even when
+# copied into config), ax also indexes:
 #   - the harness's own relocation env var when set: CLAUDE_CONFIG_DIR,
 #     CODEX_HOME, PI_CODING_AGENT_DIR, XDG_DATA_HOME (opencode). A non-default
 #     value becomes the primary store, since that is where the harness now files

@@ -19,7 +19,7 @@ import (
 
 func TestRunHeartbeatRecipeSuccessConcludesRunAndLogs(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	t.Setenv("AX_CONFIG", filepath.Join(t.TempDir(), "config.toml"))
+	isolateRecipeStores(t)
 	t.Setenv("AX_PARENT", "")
 	id, group := "recipe-ok", "run-recipe-ok"
 	logPath := filepath.Join(t.TempDir(), "recipe.log")
@@ -61,7 +61,7 @@ func TestRunHeartbeatRecipeSuccessConcludesRunAndLogs(t *testing.T) {
 
 func TestRunHeartbeatRecipeFailureConcludesFailed(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	t.Setenv("AX_CONFIG", filepath.Join(t.TempDir(), "config.toml"))
+	isolateRecipeStores(t)
 	t.Setenv("AX_PARENT", "")
 	id, group := "recipe-bad", "run-recipe-bad"
 	if err := meta.Save(id, meta.Meta{Harness: "recipe", Mode: "recipe", Task: "/tmp/bad.sh", Group: group, Origin: "human"}); err != nil {
@@ -81,6 +81,31 @@ func TestRunHeartbeatRecipeFailureConcludesFailed(t *testing.T) {
 	if m.Outcome != "failure" || !strings.Contains(m.FailReason, "about to fail") {
 		t.Fatalf("failed recipe meta = %#v", m)
 	}
+}
+
+// A nonexistent config selects real default stores. These recipe-only tests
+// need metadata and logs, not the developer's Claude/Codex/pi history.
+func isolateRecipeStores(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	const cfg = `auto_stores = false
+[[harness]]
+name = "claude"
+glob = []
+[[harness]]
+name = "codex"
+glob = []
+[[harness]]
+name = "pi"
+glob = []
+[[harness]]
+name = "opencode"
+db = []
+`
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AX_CONFIG", path)
 }
 
 func TestPlainRunStopSignalsProcessGroup(t *testing.T) {

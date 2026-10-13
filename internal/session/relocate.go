@@ -57,7 +57,11 @@ func Relocate(h config.Harness, s Session) error {
 	if s.Store != "" {
 		return nil
 	}
-	root := globRoot(h.PrimaryStore().Glob)
+	store := h.PrimaryStore()
+	if own, ok := h.TranscriptStore(s.File); ok {
+		store = own
+	}
+	root := globRoot(store.Glob)
 	if root == "" {
 		return nil
 	}

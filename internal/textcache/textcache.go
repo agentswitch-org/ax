@@ -19,15 +19,16 @@ func dir() string {
 }
 
 // pathFor maps a transcript to its sidecar path (hashed to a flat filename).
-func pathFor(transcript string) string {
-	sum := sha1.Sum([]byte(transcript))
+func pathFor(format, transcript string) string {
+	// Include parser revision and format: changing either invalidates old prose.
+	sum := sha1.Sum([]byte("v2\x00" + format + "\x00" + transcript))
 	return filepath.Join(dir(), hex.EncodeToString(sum[:])+".txt")
 }
 
 // Ensure returns the sidecar path for a transcript, rebuilding it if missing or
 // stale. On any failure it returns "" so callers can fall back to the raw file.
 func Ensure(format, transcript string) string {
-	cache := pathFor(transcript)
+	cache := pathFor(format, transcript)
 	src, err := os.Stat(transcript)
 	if err != nil {
 		return ""
@@ -38,7 +39,7 @@ func Ensure(format, transcript string) string {
 	if err := os.MkdirAll(dir(), 0o700); err != nil {
 		return ""
 	}
-	if err := os.WriteFile(cache, []byte(session.FullText(format, transcript)), 0o600); err != nil {
+	if err := axdir.WriteFileAtomic(cache, []byte(session.FullText(format, transcript)), 0o600); err != nil {
 		return ""
 	}
 	return cache

@@ -388,7 +388,18 @@ Press `` ` `` (the leader, rebindable as `bind`), then a key, to run your own sh
 
 Claude Code, Codex, pi, and opencode are built in and work with no config file. To add or change a harness, copy `config.example.toml` to `~/.config/ax/config.toml`. Each `[[harness]]` says where its transcripts live and how to resume a session.
 
-A harness's `glob` (and opencode's `db`) can be one path or a list. The first entry is the primary store, the one ax resumes from; the rest are extra stores ax also indexes, so an old location or a second account still shows up. Without an explicit `glob`, ax resolves each built-in harness's store from its own relocation environment variable when set (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`, `XDG_DATA_HOME`), and, inside WSL, adds the Windows-side stores across the interop boundary. `ax config stores` prints the resolved list per harness. Set `auto_stores = false` to index only the paths you name.
+A harness's `glob` (and opencode's `db`) can be one path or a list. The first
+entry is preferred when the same session exists in multiple stores; extra stores
+also appear, including an old location or a second account. Recognized local
+Claude, Codex, and pi file stores resume with the owning store's home variable.
+Foreign Windows/WSL stores still require a compatible harness runtime; discovery
+alone does not guarantee cross-OS resume.
+
+With a built-in store path, including one copied into config, ax also discovers
+the harness's relocation environment variable (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+`PI_CODING_AGENT_DIR`, `XDG_DATA_HOME`) and stores across the WSL boundary.
+Custom paths replace auto-discovery for that harness. `ax config stores` prints
+the resolved list. Set `auto_stores = false` to use only configured paths.
 
 Set `default_harness` to drop the harness name from the command line:
 

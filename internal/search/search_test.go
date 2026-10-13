@@ -3,6 +3,7 @@ package search
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/agentswitch-org/ax/internal/config"
@@ -130,6 +131,14 @@ func TestInprocLineNumbers1Based(t *testing.T) {
 
 // --- splitMatch tests ---
 
+func TestInprocLongLineWithoutTrailingNewline(t *testing.T) {
+	f := writeFile(t, t.TempDir(), "long.txt", "header\n"+strings.Repeat("x", 128*1024)+"NEEDLE")
+	got := inproc{}.Matches("needle", []string{f}, 1)
+	if lines := got[f]; len(lines) != 1 || lines[0] != 2 {
+		t.Fatalf("long final line should match: %v", got)
+	}
+}
+
 func TestSplitMatchValid(t *testing.T) {
 	file, line, ok := splitMatch("/tmp/session.json:42:some text here")
 	if !ok {
@@ -140,6 +149,15 @@ func TestSplitMatchValid(t *testing.T) {
 	}
 	if line != 42 {
 		t.Errorf("line: want 42, got %d", line)
+	}
+}
+
+func TestSplitMatchNullDelimitedPaths(t *testing.T) {
+	for _, path := range []string{`C:\Users\alice\session.txt`, "/tmp/project:2026/chat.txt", "/tmp/project\nname/chat.txt"} {
+		file, line, ok := splitMatch(path + "\x00" + "42:some: text")
+		if !ok || file != path || line != 42 {
+			t.Fatalf("path %q parsed as %q:%d (%v)", path, file, line, ok)
+		}
 	}
 }
 

@@ -3,8 +3,7 @@ package config
 // A harness's transcripts do not always live in one place. The store list is
 // how ax finds every one of them:
 //
-//   - the primary store (Stores[0]): where the local harness reads and writes,
-//     and the only store a resume is served from;
+//   - the primary store (Stores[0]): the preferred local store;
 //   - a secondary store the user added (a second glob/db entry);
 //   - the harness's own relocation env var (CLAUDE_CONFIG_DIR, CODEX_HOME,
 //     PI_CODING_AGENT_DIR, XDG_DATA_HOME): when set to a non-default dir, that
@@ -32,7 +31,7 @@ type Store struct {
 	DB      string // sqlite path, or "" for a file store
 	Label   string // session badge for a foreign store: "", "win", or "wsl"
 	Source  string // diagnostic tag: "config", "env:CLAUDE_CONFIG_DIR", "wsl-auto"
-	Primary bool   // the store the harness resumes from (Stores[0])
+	Primary bool   // the preferred local store (Stores[0])
 	Xlate   string // recorded-cwd translation for a cross-boundary store: "", "win2unix"
 	Root    string // mount root for Xlate (e.g. "/mnt/"); empty otherwise
 }
@@ -66,6 +65,18 @@ func specFor(format string) (storeSpec, bool) {
 	return storeSpec{}, false
 }
 
+func sameStorePaths(a, b StringList) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if filepath.Clean(ExpandHome(a[i])) != filepath.Clean(ExpandHome(b[i])) {
+			return false
+		}
+	}
+	return true
+}
+
 // underRoot builds the store glob/db for this format under a config root dir.
 func (s storeSpec) underRoot(root string) (glob, db string) {
 	if len(s.dbSub) > 0 {
@@ -76,8 +87,8 @@ func (s storeSpec) underRoot(root string) (glob, db string) {
 
 // ResolveStores fills each harness's Stores from its glob/db, the format's env
 // override, and (when auto discovery is on) the cross-WSL-boundary stores.
-// userStores names harnesses whose glob/db the user set explicitly; the env
-// override is not applied there, because the user already named the store.
+// userStores names harnesses whose glob/db differs from the built-in paths;
+// copied defaults still allow environment and WSL discovery.
 func ResolveStores(cfg *Config, userStores map[string]bool) {
 	for i := range cfg.Harnesses {
 		h := &cfg.Harnesses[i]
@@ -175,12 +186,59 @@ func (h Harness) EffectiveStores() []Store {
 	return out
 }
 
-// PrimaryStore is the store the harness reads/writes and resumes from.
+// PrimaryStore is the preferred local store. Resume can use TranscriptStore
+// to find the owning store of an existing session.
 func (h Harness) PrimaryStore() Store {
 	if st := h.EffectiveStores(); len(st) > 0 {
 		return st[0]
 	}
 	return Store{}
+}
+
+// TranscriptStore identifies the configured store that actually owns a file.
+// Resume must not assume every indexed session lives in the primary store.
+func (h Harness) TranscriptStore(path string) (Store, bool) {
+	if path == "" {
+		return Store{}, false
+	}
+	for _, st := range h.EffectiveStores() {
+		if st.Glob == "" {
+			continue
+		}
+		if match, err := filepath.Match(st.Glob, path); err == nil && match {
+			return st, true
+		}
+	}
+	return Store{}, false
+}
+
+// TranscriptEnv returns the harness's home override for a recognized store
+// layout. Custom layouts remain under their custom resume template's control.
+func (h Harness) TranscriptEnv(path string) (name, value string) {
+	st, ok := h.TranscriptStore(path)
+	if !ok || st.Label != "" {
+		return "", ""
+	}
+	spec, ok := specFor(h.Format)
+	if !ok || len(spec.fileSub) == 0 || spec.envVar == "" {
+		return "", ""
+	}
+	suffix := string(filepath.Separator) + filepath.Join(spec.fileSub...)
+	if !strings.HasSuffix(st.Glob, suffix) {
+		return "", ""
+	}
+	root := strings.TrimSuffix(st.Glob, suffix)
+	if root == "" {
+		root = string(filepath.Separator)
+	}
+	if strings.ContainsAny(root, "*?[") {
+		return "", "" // a wildcard root is not a literal harness home
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", ""
+	}
+	return spec.envVar, root
 }
 
 // MountRoot is the WSL automount root when this process runs in WSL (e.g.

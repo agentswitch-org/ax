@@ -338,7 +338,7 @@ func (a App) loadPickView() finder.View {
 	cfg.Hosts = hostreg.Merge(cfg.Hosts) // fold in self-registered ephemeral hosts
 	db := models.Load()
 	base := cfg // pre-composition, the fallback when a snapshot's config reload fails
-	sessions := indexedSessions(cfg)
+	sessions := session.Index(cfg)
 	remoteState := map[string]state.Runtime{}
 	var fed *federation
 	var hosts []view.HostStatus
@@ -348,6 +348,7 @@ func (a App) loadPickView() finder.View {
 		hosts = fed.roster(len(sessions))
 		hostUpdates = make(chan finder.HostUpdate, len(cfg.Hosts))
 		var wg sync.WaitGroup
+		local := append([]session.Session(nil), sessions...)
 		for _, h := range cfg.Hosts {
 			wg.Add(1)
 			go func(h config.Host) {
@@ -359,7 +360,7 @@ func (a App) loadPickView() finder.View {
 				fed.record(h.Name, hostResult{sessions: ss, rt: rt, state: st})
 				// Buffered to the host count, so this never blocks even if the
 				// picker has already closed.
-				hostUpdates <- a.fedSnapshot(base, fed)
+				hostUpdates <- pickSnapshot(base, local, fed)
 			}(h)
 		}
 		go func() { wg.Wait(); close(hostUpdates) }() // closed = every host reported
@@ -2089,8 +2090,13 @@ func (a App) fedSnapshot(fallback config.Config, fed *federation) finder.HostUpd
 	} else {
 		ncfg.Hosts = hostreg.Merge(ncfg.Hosts)
 	}
-	local := indexedSessions(ncfg)
-	all := local
+	return pickSnapshot(ncfg, session.Index(ncfg), fed)
+}
+
+// Host arrivals merge with an immutable local snapshot. Only the scheduled
+// local refresh scans disk; an SSH response must not trigger another scan.
+func pickSnapshot(cfg config.Config, local []session.Session, fed *federation) finder.HostUpdate {
+	all := append([]session.Session(nil), local...)
 	rt := map[string]state.Runtime{}
 	var roster []view.HostStatus
 	if fed != nil {
@@ -2101,7 +2107,7 @@ func (a App) fedSnapshot(fallback config.Config, fed *federation) finder.HostUpd
 	}
 	return finder.HostUpdate{
 		Sessions:    all,
-		Config:      composeCols(ncfg, all, len(rt) > 0),
+		Config:      composeCols(cfg, all, len(rt) > 0),
 		RemoteState: rt,
 		Hosts:       roster,
 	}
@@ -2393,9 +2399,13 @@ func resumeCmd(h config.Harness, s session.Session, override *string) string {
 	// dir/id/model come from the transcript (untrusted); fillTemplate quotes them
 	// so a working directory or model name with shell metacharacters can't run code
 	// on resume. {args} stays shell-splittable (user config).
-	return fillTemplate(h.Resume, map[string]string{
+	cmd := fillTemplate(h.Resume, map[string]string{
 		"id": s.ID, "dir": s.Dir, "model": model, "args": argsFor(h, override),
 	})
+	if name, root := h.TranscriptEnv(s.File); name != "" {
+		cmd = shell.InheritEnv([]shell.Op{shell.SetLiteral(name, root)}, cmd)
+	}
+	return cmd
 }
 
 // launchCmd fills a harness's launch template for a fresh session, substituting

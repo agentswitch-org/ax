@@ -398,9 +398,7 @@ func TestReapWorkerReopensHooklessTurnAtFireTime(t *testing.T) {
 // transitions into the done state, a taskless session just goes idle, and
 // --close-on-done tears the session's sidecars down instead of halting in done.
 func TestConcludeOrIdle(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", dir)
-	t.Setenv("XDG_CONFIG_HOME", dir) // isolate: no user notify config fires
+	isolate(t)
 	a := App{}
 	stubCloseSession(t)
 
@@ -465,8 +463,7 @@ func TestConcludeOrIdle(t *testing.T) {
 // waiter hanging forever; and a session that already concluded is never
 // overwritten by its own teardown exit.
 func TestConcludeExit(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", dir)
+	isolate(t)
 
 	// A zero exit on a headless job: done, outcome success, never failed.
 	ok := "job-ok"
@@ -587,8 +584,7 @@ func TestConcludeExit(t *testing.T) {
 // not-yet-concluded task worker that gets killed is marked failed so a waiter
 // unblocks with a truthful outcome.
 func TestKillPreservesConclusion(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", dir)
+	isolate(t)
 
 	// A done worker killed afterwards: marker survives, outcome stays success.
 	done := "worker-done"
@@ -642,9 +638,7 @@ func TestKillPreservesConclusion(t *testing.T) {
 // claude's Stop hook, an error turn end concludes failed with the reason, and
 // a taskless session is untouched.
 func TestConcludeTurnEnd(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", dir)
-	t.Setenv("XDG_CONFIG_HOME", dir) // isolate: no user notify config fires
+	isolate(t)
 
 	worker := "pi-worker"
 	if err := meta.Save(worker, meta.Meta{Mode: "interactive", Task: "ship it"}); err != nil {
@@ -687,8 +681,7 @@ func TestConcludeTurnEnd(t *testing.T) {
 // run failed (MarkFailed) before it exited, the later exit-code path must not
 // clobber that more specific reason with the generic exit tail.
 func TestConcludeExitKeepsEarlyReason(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", dir)
+	isolate(t)
 
 	id := "job-early"
 	if err := meta.Save(id, meta.Meta{Mode: "headless", Task: "ship it"}); err != nil {
@@ -706,8 +699,7 @@ func TestConcludeExitKeepsEarlyReason(t *testing.T) {
 // waiting for the process to exit, and this never applies to an interactive
 // session or a session already terminal.
 func TestMarkFailed(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", dir)
+	isolate(t)
 
 	id := "job-fatal"
 	if err := meta.Save(id, meta.Meta{Mode: "headless", Task: "ship it"}); err != nil {

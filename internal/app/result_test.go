@@ -46,6 +46,16 @@ func isolate(t *testing.T) string {
 	t.Setenv("USERPROFILE", home) // os.UserHomeDir reads USERPROFILE on Windows
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "cfg"))
+	// Inherited AX_CONFIG and auto-discovered stores can escape a fake HOME
+	// (CODEX_HOME, WSL shares, etc.). These tests own only their fixture stores.
+	t.Setenv("AX_CONFIG", "")
+	configDir := filepath.Join(home, "cfg", "ax")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("auto_stores = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return home
 }
 

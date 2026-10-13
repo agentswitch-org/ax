@@ -10,12 +10,15 @@ package config
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"unicode/utf16"
 )
 
 // Discovery results are constant for the life of a process (which OS this is,
@@ -41,7 +44,7 @@ var (
 // the memoization without a real WSL or Windows host.
 var (
 	enumWindowsHomes = windowsHomesUnder
-	listWSLDistros   = func() ([]byte, error) { return exec.Command("wsl.exe", "-l", "-q").Output() }
+	listWSLDistros   = func() ([]byte, error) { return exec.Command("wsl.exe", "--list", "--running", "--quiet").Output() }
 )
 
 // resetStoreCaches drops every memoized discovery result. Test-only: production
@@ -163,36 +166,51 @@ func enumWSLHomes() []string {
 	}
 	var homes []string
 	for _, distro := range parseWSLList(out) {
-		usersRoot := `\\wsl.localhost\` + distro + `\home`
-		ents, err := os.ReadDir(usersRoot)
-		if err != nil {
+		root := `\\wsl.localhost\` + distro
+		if _, err := os.Stat(root); err != nil {
 			// Older builds expose the share as \\wsl$\<distro>.
-			usersRoot = `\\wsl$\` + distro + `\home`
-			if ents, err = os.ReadDir(usersRoot); err != nil {
-				continue
-			}
+			root = `\\wsl$\` + distro
 		}
-		for _, e := range ents {
-			if e.IsDir() {
-				homes = append(homes, filepath.Join(usersRoot, e.Name()))
-			}
-		}
+		homes = append(homes, wslHomesUnder(root)...)
 	}
 	return homes
 }
 
-// parseWSLList decodes the distro names from `wsl.exe -l -q` output, which is
-// UTF-16LE. The ASCII payload is every other byte, so dropping the NUL bytes
-// recovers the names without a UTF-16 dependency.
-func parseWSLList(raw []byte) []string {
-	b := make([]byte, 0, len(raw))
-	for _, c := range raw {
-		if c != 0 && c != '\r' {
-			b = append(b, c)
+func wslHomesUnder(root string) []string {
+	var homes []string
+	usersRoot := filepath.Join(root, "home")
+	entries, _ := os.ReadDir(usersRoot)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			homes = append(homes, filepath.Join(usersRoot, entry.Name()))
 		}
 	}
+	// Root is common in imported/container-derived distros and lives outside /home.
+	rootHome := filepath.Join(root, "root")
+	if info, err := os.Stat(rootHome); err == nil && info.IsDir() {
+		homes = append(homes, rootHome)
+	}
+	return homes
+}
+
+// wsl.exe emits UTF-16LE, optionally with a BOM. Decode full code points so
+// non-ASCII distro names remain usable in UNC paths. Also accept UTF-8 output.
+func parseWSLList(raw []byte) []string {
+	text := string(raw)
+	if bytes.HasPrefix(raw, []byte{0xff, 0xfe}) || bytes.HasPrefix(raw, []byte{0xfe, 0xff}) || bytes.IndexByte(raw, 0) >= 0 {
+		var order binary.ByteOrder = binary.LittleEndian
+		if bytes.HasPrefix(raw, []byte{0xfe, 0xff}) {
+			order = binary.BigEndian
+		}
+		units := make([]uint16, 0, len(raw)/2)
+		for i := 0; i+1 < len(raw); i += 2 {
+			units = append(units, order.Uint16(raw[i:i+2]))
+		}
+		text = string(utf16.Decode(units))
+	}
+	text = strings.TrimPrefix(text, "\ufeff")
 	var names []string
-	for _, line := range strings.Split(string(b), "\n") {
+	for _, line := range strings.Split(text, "\n") {
 		if n := strings.TrimSpace(line); n != "" {
 			names = append(names, n)
 		}

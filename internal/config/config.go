@@ -685,23 +685,26 @@ func Load() (Config, error) {
 	if user.Shell != "" {
 		cfg.Shell = user.Shell
 	}
-	// Harnesses whose store paths the user set explicitly: the env override is
-	// not applied on top of an explicit glob/db (the user named the store).
+	// A custom store replaces auto-discovery. Repeating a built-in path in an
+	// older config is not a custom store: keep env and WSL discovery working.
 	userStores := map[string]bool{}
 	for _, h := range userHarnesses.Harnesses {
-		if h.Glob != nil || h.DB != nil {
-			userStores[h.Name] = true
-		}
 		replaced := false
 		for i := range cfg.Harnesses {
 			if cfg.Harnesses[i].Name == h.Name {
-				cfg.Harnesses[i] = applyHarnessOverride(cfg.Harnesses[i], h)
+				before := cfg.Harnesses[i]
+				after := applyHarnessOverride(before, h)
+				if !sameStorePaths(before.Glob, after.Glob) || !sameStorePaths(before.DB, after.DB) {
+					userStores[h.Name] = true
+				}
+				cfg.Harnesses[i] = after
 				replaced = true
 				break
 			}
 		}
 		if !replaced {
 			cfg.Harnesses = append(cfg.Harnesses, h.toHarness())
+			userStores[h.Name] = h.Glob != nil || h.DB != nil
 		}
 	}
 	ResolveStores(&cfg, userStores)
